@@ -1,0 +1,27 @@
+[project]
+name = "x-crawler"
+version = "0.1.0"
+description = "Twitter/X account realtime monitor backed by twscrape"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "aiosqlite>=0.17",
+    "pydantic-settings>=2.0",
+    "sse-starlette>=2.0",
+    "itsdangerous>=2.0",
+    "twscrape",
+]
+
+[tool.uv.sources]
+twscrape = { path = "./twscrape", editable = true }
+
+[build-system]
+requires = ["hatchling>=1.9.1"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.uv]
+package = true

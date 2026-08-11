@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X-Crawler 管理面板</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+  <!-- ================= 登录视图 ================= -->
+  <div v-if="!authed" class="login-wrap">
+    <form class="login-card" @submit.prevent="doLogin">
+      <h1>X-Crawler</h1>
+      <p class="sub">后台管理登录</p>
+      <div v-if="loginError" class="alert error">{{ loginError }}</div>
+      <input v-model.trim="loginForm.username" type="text" placeholder="用户名" autocomplete="username" required>
+      <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" required>
+      <button type="submit" class="primary" :disabled="loggingIn">{{ loggingIn ? '登录中…' : '登 录' }}</button>
+    </form>
+  </div>
+
+  <!-- ================= 主界面 ================= -->
+  <div v-else class="app">
+    <header class="topbar">
+      <span class="brand">X-Crawler <small>管理面板</small></span>
+      <nav class="nav">
+        <a v-for="p in pages" :key="p.key" :href="p.path" :class="{active: route === p.key}">{{ p.label }}</a>
+      </nav>
+      <div class="spacer"></div>
+      <span class="who">{{ username }}</span>
+      <button class="btn ghost" @click="doLogout">退出登录</button>
+    </header>
+
+    <main class="content">
+      <!-- ================= 监控管理 ================= -->
+      <section v-if="route === 'monitors'">
+        <div class="card">
+          <h2>添加监控</h2>
+          <form class="inline-form" @submit.prevent="addMonitor">
+            <input v-model.trim="monForm.username" placeholder="要监控的 Twitter 用户名" required>
+            <input v-model.number="monForm.interval" type="number" min="1" max="3600" placeholder="轮询间隔(秒)" style="width:150px">
+            <button type="submit" class="primary" :disabled="monAdding">{{ monAdding ? '添加中…' : '添加监控' }}</button>
+          </form>
+          <div v-if="monError" class="alert error">{{ monError }}</div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>监控列表</h2>
+            <span class="muted">{{ monitors.length }} 个监控</span>
+            <div class="spacer"></div>
+            <button class="btn ghost" @click="loadMonitors">刷新</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th>ID</th><th>用户名</th><th>昵称</th><th>间隔</th><th>状态</th>
+              <th>最近轮询</th><th>最后推文 ID</th><th>错误</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="m in monitors" :key="m.id">
+                <td>{{ m.id }}</td>
+                <td class="mono">{{ m.username }}</td>
+                <td>{{ m.display_name || '-' }}</td>
+                <td>{{ m.interval_seconds }}s</td>
+                <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
+                <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
+                <td class="mono muted">{{ m.last_seen_tweet_id ?? '-' }}</td>
+                <td class="err-cell" :title="m.last_error">{{ m.last_error || '' }}</td>
+                <td class="ops">
+                  <button v-if="!m.active" class="btn small" @click="resumeMonitor(m)">恢复</button>
+                  <button class="btn small danger" @click="removeMonitor(m)">删除</button>
+                </td>
+              </tr>
+              <tr v-if="!monitors.length"><td colspan="9" class="empty">暂无监控，先在上方添加</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 推文浏览 ================= -->
+      <section v-if="route === 'tweets'">
+        <div class="card">
+          <div class="inline-form">
+            <select v-model="tweetMonId" @change="loadTweets">
+              <option :value="null" disabled>选择监控</option>
+              <option v-for="m in monitors" :key="m.id" :value="m.id">{{ m.username }} (#{{ m.id }})</option>
+            </select>
+            <input v-model.number="tweetLimit" type="number" min="1" max="200" placeholder="条数" style="width:90px">
+            <button class="btn ghost" @click="loadTweets">刷新</button>
+            <span v-if="tweetsLoading" class="muted">加载中…</span>
+            <span v-else class="muted">共 {{ tweets.length }} 条（每 10s 自动刷新）</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div v-if="tweets.length" class="tweet-list">
+            <div class="tweet" v-for="t in tweets" :key="t.id">
+              <div class="tweet-head">
+                <span class="mono">@{{ t.username }}</span>
+                <span class="muted">{{ fmtTime(t.created_at) }}</span>
+                <span class="mono muted">#{{ t.id }}</span>
+              </div>
+              <div class="tweet-content" :class="{clamped: !t._exp}" @click="t._exp = !t._exp" :title="'点击' + (t._exp ? '收起' : '展开')">{{ t.content }}</div>
+              <div class="tweet-meta">
+                <span>♥ {{ t.like_count ?? 0 }}</span>
+                <span>↻ {{ t.retweet_count ?? 0 }}</span>
+                <span>💬 {{ t.reply_count ?? 0 }}</span>
+                <span v-if="t.lang" class="muted">[{{ t.lang }}]</span>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="tweetMonId != null" class="empty">还没有推文（点击刷新拉取）</div>
+          <div v-else class="empty">先选择一个监控</div>
+        </div>
+      </section>
+
+      <!-- ================= 统计看板 ================= -->
+      <section v-if="route === 'stats'">
+        <div class="cards">
+          <div class="stat-card"><div class="num">{{ stats.monitors_total ?? '-' }}</div><div class="lbl">监控总数</div></div>
+          <div class="stat-card"><div class="num ok">{{ stats.monitors_active ?? '-' }}</div><div class="lbl">运行中</div></div>
+          <div class="stat-card"><div class="num off">{{ stats.monitors_paused ?? '-' }}</div><div class="lbl">已暂停</div></div>
+          <div class="stat-card"><div class="num">{{ stats.tweets_total ?? '-' }}</div><div class="lbl">抓取推文</div></div>
+          <div class="stat-card"><div class="num">{{ stats.tweets_today ?? '-' }}</div><div class="lbl">今日新增</div></div>
+          <div class="stat-card"><div class="num">{{ stats.accounts?.total ?? '-' }}</div><div class="lbl">采集账号</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>监控运行态</h2>
+            <span class="muted">已运行 {{ fmtDur(stats.uptime_seconds) }}</span>
+            <div class="spacer"></div>
+            <button class="btn ghost" @click="loadStats">刷新</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th>ID</th><th>用户名</th><th>基础间隔</th><th>当前间隔</th><th>连续错误</th>
+              <th>轮询次数</th><th>新增推文</th><th>最近延迟</th><th>错误</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="d in stats.monitors_detail || []" :key="d.id">
+                <td>{{ d.id }}</td>
+                <td class="mono">{{ d.username }}</td>
+                <td>{{ d.interval_seconds }}s</td>
+                <td>{{ d.current_interval != null ? d.current_interval + 's' : '-' }}</td>
+                <td :class="d.consecutive_errors > 0 ? 'err' : ''">{{ d.consecutive_errors }}</td>
+                <td>{{ d.total_polls }}</td>
+                <td>{{ d.total_new }}</td>
+                <td class="muted">{{ fmtMs(d.last_poll_ms) }}</td>
+                <td class="err-cell" :title="d.last_error">{{ d.last_error || '' }}</td>
+              </tr>
+              <tr v-if="!stats.monitors_detail || !stats.monitors_detail.length"><td colspan="9" class="empty">暂无监控</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 采集账号管理 ================= -->
+      <section v-if="route === 'accounts'">
+        <div class="cards">
+          <div class="stat-card"><div class="num">{{ acc.stats?.total ?? '-' }}</div><div class="lbl">账号总数</div></div>
+          <div class="stat-card"><div class="num ok">{{ acc.stats?.active ?? '-' }}</div><div class="lbl">可用</div></div>
+          <div class="stat-card"><div class="num off">{{ acc.stats?.inactive ?? '-' }}</div><div class="lbl">失效</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>账号健康</h2>
+            <div class="spacer"></div>
+            <button class="btn ghost" @click="loadAccounts">刷新</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th>用户名</th><th>登录态</th><th>登录方式</th><th>Active</th><th>最近使用</th><th>请求量</th><th>错误</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="a in acc.accounts || []" :key="a.username">
+                <td class="mono">{{ a.username }}</td>
+                <td><span class="badge" :class="a.logged_in ? 'ok' : 'off'">{{ a.logged_in ? '已登录' : '未登录' }}</span></td>
+                <td class="muted">{{ a.login_method || '-' }}</td>
+                <td><span class="badge" :class="a.active ? 'ok' : 'off'">{{ a.active ? 'active' : 'inactive' }}</span></td>
+                <td class="muted">{{ a.last_used || '-' }}</td>
+                <td>{{ a.total_req ?? 0 }}</td>
+                <td class="err-cell" :title="a.error_msg">{{ a.error_msg || '' }}</td>
+                <td class="ops"><button class="btn small danger" @click="removeAccount(a)">删除</button></td>
+              </tr>
+              <tr v-if="!acc.accounts || !acc.accounts.length"><td colspan="8" class="empty">没有采集账号</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
