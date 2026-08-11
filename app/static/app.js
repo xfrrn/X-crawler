@@ -59,6 +59,11 @@ createApp({
       // 统计看板 / 采集账号
       stats: {},
       acc: {},
+      accBusy: false,
+      accMsg: "",
+      accMsgOk: false,
+      pwForm: { username: "", password: "", email: "", email_password: "", proxy: "" },
+      ckForm: { username: "", cookies: "" },
       tick: 0,
     };
   },
@@ -220,6 +225,73 @@ createApp({
           `/accounts/${encodeURIComponent(a.username)}`,
           { method: "DELETE" }
         );
+        await this.loadAccounts();
+      } catch (e) {
+        this.notify(e.message);
+      }
+    },
+    /* 可用性 = 已登录 且 未锁定（active） */
+    avail(a) {
+      return !!(a.logged_in && a.active);
+    },
+    async addAccountByPassword() {
+      const u = this.pwForm.username.trim();
+      if (!u || !this.pwForm.password) return;
+      this.accBusy = true;
+      this.accMsg = "";
+      try {
+        const r = await this.api("/accounts", {
+          method: "POST",
+          body: JSON.stringify({
+            username: u,
+            password: this.pwForm.password,
+            email: this.pwForm.email,
+            email_password: this.pwForm.email_password,
+            proxy: this.pwForm.proxy || null,
+          }),
+        });
+        this.pwForm = { username: "", password: "", email: "", email_password: "", proxy: "" };
+        this.accMsg = r.logged_in
+          ? `账号 ${u} 添加成功，已登录（可用）`
+          : `账号 ${u} 已添加，但登录失败：${r.error_msg || "未知原因"}`;
+        this.accMsgOk = r.logged_in;
+        await this.loadAccounts();
+      } catch (e) {
+        this.accMsg = e.message;
+        this.accMsgOk = false;
+      } finally {
+        this.accBusy = false;
+      }
+    },
+    async addAccountByCookies() {
+      const u = this.ckForm.username.trim();
+      if (!u || !this.ckForm.cookies.trim()) return;
+      this.accBusy = true;
+      this.accMsg = "";
+      try {
+        await this.api("/accounts/cookies", {
+          method: "POST",
+          body: JSON.stringify({ username: u, cookies: this.ckForm.cookies }),
+        });
+        this.ckForm = { username: "", cookies: "" };
+        this.accMsg = `账号 ${u} cookies 导入成功（可用）`;
+        this.accMsgOk = true;
+        await this.loadAccounts();
+      } catch (e) {
+        this.accMsg = e.message;
+        this.accMsgOk = false;
+      } finally {
+        this.accBusy = false;
+      }
+    },
+    async reloginAccount(a) {
+      try {
+        const r = await this.api(
+          `/accounts/${encodeURIComponent(a.username)}/relogin`,
+          { method: "POST" }
+        );
+        if (r.logged_in) this.notify(`${a.username} 重新登录成功`);
+        else this.notify(`${a.username} 登录失败：${r.error_msg || "未知原因"}`);
         await this.loadAccounts();
       } catch (e) {
         this.notify(e.message);

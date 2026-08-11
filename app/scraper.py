@@ -21,6 +21,19 @@ class Scraper(Protocol):
 
     async def pool_stats(self) -> dict: ...
 
+    async def add_account(
+        self,
+        username: str,
+        password: str,
+        email: str = "",
+        email_password: str = "",
+        proxy: str | None = None,
+    ) -> dict: ...
+
+    async def add_account_cookies(self, username: str, cookies: str) -> dict: ...
+
+    async def relogin(self, username: str) -> dict | None: ...
+
     async def delete_account(self, username: str) -> bool: ...
 
     async def close(self) -> None: ...
@@ -73,6 +86,40 @@ class TwscrapeScraper:
     async def pool_stats(self) -> dict:
         return await self._api.pool.stats()
 
+    async def _account_info(self, username: str) -> dict:
+        """从 accounts_info() 里捞单个账号的当前状态（含登录结果/错误）。"""
+        for info in await self._api.pool.accounts_info():
+            if info["username"] == username:
+                return dict(info)
+        raise ValueError(f"账号不存在: {username}")
+
+    async def add_account(
+        self,
+        username: str,
+        password: str,
+        email: str = "",
+        email_password: str = "",
+        proxy: str | None = None,
+    ) -> dict:
+        pool = self._api.pool
+        if await pool.get_account(username) is not None:
+            raise ValueError(f"账号已存在: {username}")
+        await pool.add_account(username, password, email, email_password, proxy=proxy)
+        # 只对刚添加的账号发起登录；login_all 内部会过滤 cookies 账号/已登录账号
+        await pool.login_all([username])
+        return await self._account_info(username)
+
+    async def add_account_cookies(self, username: str, cookies: str) -> dict:
+        # cookies 导入即登录态，无需再 login；已存在账号会被覆盖（刷新会话）
+        await self._api.pool.add_account_cookies(username, cookies)
+        return await self._account_info(username)
+
+    async def relogin(self, username: str) -> dict | None:
+        if await self._api.pool.get_account(username) is None:
+            return None
+        await self._api.pool.relogin(username)
+        return await self._account_info(username)
+
     async def delete_account(self, username: str) -> bool:
         return await self._api.pool.delete_accounts(username)
 
@@ -94,6 +141,8 @@ class MockScraper:
         self._usernames: dict[int, str] = {}
         self._fail_start = fail_start
         self._calls = 0
+        # 模拟密码账号的登录凭据（不对外展示，重登/删除时用）
+        self._secrets: dict[str, str] = {}
         # 演示用假采集账号：与 twscrape accounts_info() 的字段形状一致，
         # 让 mock 模式下「采集账号管理」页面也能完整演示
         self._accounts: dict[str, dict] = {
@@ -160,10 +209,75 @@ class MockScraper:
             "note": "mock 模式：演示用假账号",
         }
 
+    async def add_account(
+        self,
+        username: str,
+        password: str,
+        email: str = "",
+        email_password: str = "",
+        proxy: str | None = None,
+    ) -> dict:
+        if username in self._accounts:
+            raise ValueError(f"账号已存在: {username}")
+        self._secrets[username] = password
+        if password:
+            acc = {
+                "username": username,
+                "logged_in": True,
+                "login_method": "password",
+                "active": True,
+                "last_used": "刚刚",
+                "total_req": 0,
+                "error_msg": "",
+            }
+        else:
+            # 模拟密码缺失登录失败：给面板一个「不可用」的演示路径
+            acc = {
+                "username": username,
+                "logged_in": False,
+                "login_method": "password",
+                "active": True,
+                "last_used": None,
+                "total_req": 0,
+                "error_msg": "密码为空，登录失败",
+            }
+        self._accounts[username] = acc
+        return dict(acc)
+
+    async def add_account_cookies(self, username: str, cookies: str) -> dict:
+        if "auth_token" not in cookies or "ct0" not in cookies:
+            raise ValueError("Cookies 必须包含 auth_token 和 ct0")
+        acc = {
+            "username": username,
+            "logged_in": True,
+            "login_method": "cookies",
+            "active": True,
+            "last_used": "刚刚",
+            "total_req": 0,
+            "error_msg": "",
+        }
+        self._accounts[username] = acc
+        return dict(acc)
+
+    async def relogin(self, username: str) -> dict | None:
+        if username not in self._accounts:
+            return None
+        acc = self._accounts[username]
+        if acc["login_method"] == "password":
+            if self._secrets.get(username):
+                acc["logged_in"] = True
+                acc["error_msg"] = ""
+            else:
+                acc["logged_in"] = False
+                acc["error_msg"] = "密码缺失，登录失败"
+        acc["last_used"] = "刚刚"
+        return dict(acc)
+
     async def delete_account(self, username: str) -> bool:
         if username not in self._accounts:
             return False
         del self._accounts[username]
+        self._secrets.pop(username, None)
         return True
 
     async def close(self) -> None:

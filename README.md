@@ -60,7 +60,7 @@ curl -X DELETE http://localhost:8000/monitors/1 -H "Authorization: Bearer dev-ke
 浏览器打开 `http://localhost:8000/` 即可进入后台面板（无需 Node/前端构建，纯静态 SPA）。
 
 - 独立后台登录：`ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录后下发服务端 session cookie，**不在浏览器存 API Key**
-- 四个页面：监控管理（增删/恢复）、推文浏览、统计看板、采集账号管理（含删除账号）
+- 四个页面：监控管理（增删/恢复）、推文浏览、统计看板、采集账号管理（面板内直接添加账号并自动登录，实时显示可用性，可重新登录/删除）
 - 面板登录后即可调用全部数据接口；外部调用方仍用 `Authorization: Bearer <API_KEY>`，两种鉴权互不影响
 
 首次使用先在 `.env` 设置后台密码并改掉默认值：
@@ -73,7 +73,7 @@ ADMIN_SESSION_SECRET=<随机长字符串>
 
 ### 配置真实采集账号（twscrape 模式）
 
-先配好采集账号（用于登录 X 抓数据的账号，与被监控账号不同）：
+采集账号（用于登录 X 抓数据的账号，与被监控账号不同）除了命令行，也可以在**管理面板 → 采集账号**页直接添加（密码登录 / cookies 导入两种方式），添加后自动登录并立即显示是否可用；不可用时点「重新登录」重试。命令行方式：
 
 ```bash
 # 密码登录（X 风控严，建议配合代理 + 养号）
@@ -111,7 +111,10 @@ TWS_PROXY=http://127.0.0.1:7890     # 或 socks5://127.0.0.1:1080
 | GET | `/monitors/{id}/tweets?limit=&since_id=&before_id=` | 按监控拉推文 |
 | GET | `/tweets?username=&monitor_id=&limit=&since_id=&before_id=` | 通用查询 |
 | GET | `/stream?monitor_id=` | SSE 实时推送（先回放最近 N 条，再推实时；事件 `tweet` / 心跳 `ping`） |
-| GET | `/accounts` | 采集账号健康（登录态/请求量/错误） |
+| GET | `/accounts` | 采集账号健康（可用性/登录态/请求量/错误） |
+| POST | `/accounts` | 添加采集账号（密码登录，添加后自动登录并返回状态，仅后台 session） |
+| POST | `/accounts/cookies` | cookies 导入添加采集账号（含 `auth_token` 和 `ct0`，仅后台 session） |
+| POST | `/accounts/{username}/relogin` | 强制重新登录采集账号并返回状态（仅后台 session） |
 | DELETE | `/accounts/{username}` | 删除采集账号（仅后台 session 可用） |
 | GET | `/stats` | 聚合统计（每监控运行态、抓取量、账号健康） |
 | GET | `/health` | 存活探针（公开，无需 API Key） |

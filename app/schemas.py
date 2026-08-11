@@ -23,6 +23,23 @@ class MonitorOut(BaseModel):
     updated_at: str
 
 
+class AccountCreate(BaseModel):
+    """密码登录方式添加采集账号。"""
+
+    username: str = Field(min_length=1, max_length=64)
+    password: str = ""
+    email: str = ""
+    email_password: str = ""
+    proxy: str | None = None
+
+
+class AccountCookiesCreate(BaseModel):
+    """cookies 导入方式添加采集账号（浏览器导出，含 auth_token 和 ct0）。"""
+
+    username: str = Field(min_length=1, max_length=64)
+    cookies: str = Field(min_length=1)
+
+
 class TweetOut(BaseModel):
     id: int
     monitor_id: int

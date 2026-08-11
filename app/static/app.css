@@ -86,11 +86,11 @@ body {
 
 /* ---- 表单 ---- */
 .inline-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-input, select, button {
+input, select, textarea, button {
   font: inherit;
   color: var(--text);
 }
-input, select {
+input, select, textarea {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -98,8 +98,24 @@ input, select {
   outline: none;
   min-width: 200px;
 }
-input:focus, select:focus { border-color: var(--primary); }
+textarea { resize: vertical; line-height: 1.5; }
+input:focus, select:focus, textarea:focus { border-color: var(--primary); }
 input[type="number"] { min-width: 0; }
+
+/* ---- 采集账号添加表单 ---- */
+.acc-forms { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; }
+.acc-form {
+  flex: 1 1 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--bg);
+}
+.acc-form h3 { font-size: 13.5px; color: var(--text); margin-bottom: 2px; }
+.acc-form input, .acc-form textarea { width: 100%; min-width: 0; }
 
 /* ---- 按钮 ---- */
 .btn {
@@ -183,3 +199,4 @@ td.ops { white-space: nowrap; }
 /* ---- 提示 ---- */
 .alert { border-radius: 8px; padding: 9px 12px; font-size: 13px; }
 .alert.error { background: rgba(239, 68, 68, .12); color: var(--err); border: 1px solid var(--err); }
+.alert.ok { background: rgba(34, 197, 94, .12); color: var(--ok); border: 1px solid var(--ok); }
