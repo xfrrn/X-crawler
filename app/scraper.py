@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import twscrape
 
@@ -39,6 +39,28 @@ class Scraper(Protocol):
     async def close(self) -> None: ...
 
 
+def _media_to_dict(m: twscrape.Media | None) -> dict[str, Any] | None:
+    """把 twscrape 的 Media 转成前端可直接渲染的直链结构（图片/视频封面/GIF）。"""
+    if m is None:
+        return None
+    out: dict[str, Any] = {}
+    if m.photos:
+        out["photos"] = [p.url for p in m.photos]
+    if m.videos:
+        out["videos"] = [
+            {
+                "cover": v.thumbnailUrl,
+                "duration_ms": v.duration,
+                "views": v.views,
+                "urls": [var.url for var in v.variants],
+            }
+            for v in m.videos
+        ]
+    if m.animated:
+        out["gifs"] = [{"cover": a.thumbnailUrl, "url": a.videoUrl} for a in m.animated]
+    return out or None
+
+
 def tweet_to_dict(t: twscrape.Tweet) -> dict:
     return {
         "id": t.id,
@@ -52,6 +74,7 @@ def tweet_to_dict(t: twscrape.Tweet) -> dict:
         "like_count": t.likeCount,
         "quote_count": t.quoteCount,
         "view_count": t.viewCount,
+        "media": _media_to_dict(t.media),
         "raw_json": t.json(),
     }
 

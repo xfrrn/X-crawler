@@ -53,3 +53,4 @@ class TweetOut(BaseModel):
     like_count: int | None
     quote_count: int | None
     view_count: int | None
+    media: dict | None = None

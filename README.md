@@ -60,7 +60,7 @@ curl -X DELETE http://localhost:8000/monitors/1 -H "Authorization: Bearer dev-ke
 浏览器打开 `http://localhost:8000/` 即可进入后台面板（无需 Node/前端构建，纯静态 SPA）。
 
 - 独立后台登录：`ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录后下发服务端 session cookie，**不在浏览器存 API Key**
-- 四个页面：监控管理（增删/恢复）、推文浏览、统计看板、采集账号管理（面板内直接添加账号并自动登录，实时显示可用性，可重新登录/删除）
+- 四个页面：监控管理（增删/恢复）、推文浏览（**图片/视频/GIF 直接预览**，点击看原图）、统计看板、采集账号管理（面板内直接添加账号并自动登录，实时显示可用性，可重新登录/删除）
 - 面板登录后即可调用全部数据接口；外部调用方仍用 `Authorization: Bearer <API_KEY>`，两种鉴权互不影响
 
 首次使用先在 `.env` 设置后台密码并改掉默认值：

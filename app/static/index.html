@@ -103,6 +103,17 @@
                 <span class="mono muted">#{{ t.id }}</span>
               </div>
               <div class="tweet-content" :class="{clamped: !t._exp}" @click="t._exp = !t._exp" :title="'点击' + (t._exp ? '收起' : '展开')">{{ t.content }}</div>
+              <div v-if="t.media" class="tweet-media">
+                <a v-for="(img, i) in t.media.photos || []" :key="'p' + i" :href="img" target="_blank" rel="noopener" title="点击查看原图">
+                  <img :src="img" loading="lazy" alt="图片">
+                </a>
+                <a v-for="(v, i) in t.media.videos || []" :key="'v' + i" :href="(v.urls && v.urls.length) ? v.urls[v.urls.length - 1] : v.cover" target="_blank" rel="noopener" title="点击播放视频">
+                  <img :src="v.cover" loading="lazy" alt="视频"><span class="tplay">▶ 视频{{ dur(v.duration_ms) }}</span>
+                </a>
+                <a v-for="(g, i) in t.media.gifs || []" :key="'g' + i" :href="g.url || g.cover" target="_blank" rel="noopener" title="点击查看 GIF">
+                  <img :src="g.cover" loading="lazy" alt="GIF"><span class="tplay">▶ GIF</span>
+                </a>
+              </div>
               <div class="tweet-meta">
                 <span>♥ {{ t.like_count ?? 0 }}</span>
                 <span>↻ {{ t.retweet_count ?? 0 }}</span>

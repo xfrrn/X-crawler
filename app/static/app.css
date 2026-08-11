@@ -196,6 +196,28 @@ td.ops { white-space: nowrap; }
 }
 .tweet-meta { display: flex; gap: 16px; color: var(--muted); font-size: 12.5px; margin-top: 8px; }
 
+/* ---- 推文媒体（图片/视频/GIF）---- */
+.tweet-media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.tweet-media a { position: relative; text-decoration: none; }
+.tweet-media img {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.tweet-media .tplay {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, .65);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
 /* ---- 提示 ---- */
 .alert { border-radius: 8px; padding: 9px 12px; font-size: 13px; }
 .alert.error { background: rgba(239, 68, 68, .12); color: var(--err); border: 1px solid var(--err); }

@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS tweets (
     like_count INTEGER,
     quote_count INTEGER,
     view_count INTEGER,
+    media TEXT,
     raw_json TEXT NOT NULL,
     inserted_at TEXT NOT NULL
 );
@@ -49,6 +51,55 @@ def now_iso() -> str:
 
 def row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
     return {k: row[k] for k in row.keys()}
+
+
+def media_from_raw_json(raw: str | None) -> dict[str, Any] | None:
+    """从已入库的 raw_json（twscrape `Tweet.json()` 序列化的 dataclass）解析出 media 结构。
+
+    新推文在抓取时已把 `tweet.media` 提取成同样的结构存进 media 列；
+    这里用于**回填老数据**（media 列为空的历史推文），保证旧推文也能显示图片。
+    """
+    if not raw:
+        return None
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        return None
+    m = doc.get("media")
+    if not isinstance(m, dict):
+        return None
+    out: dict[str, Any] = {}
+    photos = [
+        p.get("url") for p in m.get("photos", []) if isinstance(p, dict) and p.get("url")
+    ]
+    if photos:
+        out["photos"] = photos
+    videos = []
+    for v in m.get("videos", []):
+        if not isinstance(v, dict):
+            continue
+        videos.append(
+            {
+                "cover": v.get("thumbnailUrl"),
+                "duration_ms": v.get("duration"),
+                "views": v.get("views"),
+                "urls": [
+                    var.get("url")
+                    for var in v.get("variants", [])
+                    if isinstance(var, dict) and var.get("url")
+                ],
+            }
+        )
+    if videos:
+        out["videos"] = videos
+    gifs = [
+        {"cover": a.get("thumbnailUrl"), "url": a.get("videoUrl")}
+        for a in m.get("animated", [])
+        if isinstance(a, dict) and a.get("thumbnailUrl")
+    ]
+    if gifs:
+        out["gifs"] = gifs
+    return out or None
 
 
 class Database:
@@ -71,6 +122,22 @@ class Database:
         cols = {row[1] for row in await (await self._conn.execute("PRAGMA table_info(monitors)")).fetchall()}
         if "created_by" not in cols:
             await self._conn.execute("ALTER TABLE monitors ADD COLUMN created_by TEXT")
+            await self._conn.commit()
+        # 轻量迁移：tweets 表补 media 列（推文图片/视频直链），并回填老数据
+        tcols = {row[1] for row in await (await self._conn.execute("PRAGMA table_info(tweets)")).fetchall()}
+        if "media" not in tcols:
+            await self._conn.execute("ALTER TABLE tweets ADD COLUMN media TEXT")
+            await self._conn.commit()
+        cur = await self._conn.execute("SELECT id, raw_json FROM tweets WHERE media IS NULL")
+        backfill = await cur.fetchall()
+        for tid, raw in backfill:
+            m = media_from_raw_json(raw)
+            if m is not None:
+                await self._conn.execute(
+                    "UPDATE tweets SET media = ? WHERE id = ?",
+                    (json.dumps(m, ensure_ascii=False), tid),
+                )
+        if backfill:
             await self._conn.commit()
 
     async def close(self) -> None:
@@ -142,8 +209,8 @@ class Database:
             INSERT OR IGNORE INTO tweets
                 (id, monitor_id, user_id, username, created_at, content, lang,
                  reply_count, retweet_count, like_count, quote_count, view_count,
-                 raw_json, inserted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 media, raw_json, inserted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tweet["id"],
@@ -158,6 +225,7 @@ class Database:
                 tweet.get("like_count"),
                 tweet.get("quote_count"),
                 tweet.get("view_count"),
+                json.dumps(tweet.get("media"), ensure_ascii=False) if tweet.get("media") else None,
                 tweet["raw_json"],
                 now_iso(),
             ),
@@ -190,7 +258,14 @@ class Database:
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         cur = await self.conn.execute(sql, params)
-        return [row_to_dict(r) for r in await cur.fetchall()]
+        rows = [row_to_dict(r) for r in await cur.fetchall()]
+        for row in rows:
+            if row.get("media"):
+                try:
+                    row["media"] = json.loads(row["media"])
+                except Exception:
+                    row["media"] = None
+        return rows
 
     async def tweet_exists(self, tweet_id: int) -> bool:
         cur = await self.conn.execute("SELECT 1 FROM tweets WHERE id = ?", (tweet_id,))

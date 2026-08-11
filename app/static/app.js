@@ -72,6 +72,11 @@ createApp({
     fmtTime,
     fmtMs,
     fmtDur,
+    /* 视频时长毫秒 -> " 12s"（面板推文媒体用） */
+    dur(ms) {
+      if (!ms) return "";
+      return " " + Math.round(ms / 1000) + "s";
+    },
     /* 创建人标记：admin:xx -> 管理员 xx；apikey:xx -> API xx */
     creatorLabel(v) {
       if (!v) return "-";
