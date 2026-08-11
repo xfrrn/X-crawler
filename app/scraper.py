@@ -1,8 +1,11 @@
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import twscrape
+
+_WS_RE = re.compile(r"[ \t]+")
 
 
 @dataclass
@@ -39,6 +42,31 @@ class Scraper(Protocol):
     async def close(self) -> None: ...
 
 
+def strip_media_links(content: str, links: list) -> str:
+    """去掉正文里对应图片/视频的 t.co 短链（面板已单独渲染图片，短链多余）。
+
+    links 可以是 twscrape TextLink 对象，也可以是 dict（回填 raw_json 时用）。
+    判定依据：display_url 以 pic.twitter.com/ 开头，或展开地址含 twimg.com（推特媒体域名）。
+    普通文字链接（如外链、x.com 链接）不会被误删。
+    """
+    if not links:
+        return content
+    short_urls: set[str] = set()
+    for link in links:
+        if hasattr(link, "text"):
+            text, url, tc = link.text, link.url, link.tcourl
+        else:
+            text, url, tc = (link or {}).get("text"), (link or {}).get("url"), (link or {}).get("tcourl")
+        text = text or ""
+        url = url or ""
+        if text.startswith("pic.twitter.com/") or "twimg.com" in url:
+            if tc:
+                short_urls.add(tc)
+    for s in short_urls:
+        content = content.replace(s, " ")
+    return _WS_RE.sub(" ", content).strip()
+
+
 def _media_to_dict(m: twscrape.Media | None) -> dict[str, Any] | None:
     """把 twscrape 的 Media 转成前端可直接渲染的直链结构（图片/视频封面/GIF）。"""
     if m is None:
@@ -67,7 +95,7 @@ def tweet_to_dict(t: twscrape.Tweet) -> dict:
         "user_id": t.user.id if t.user else t.id,
         "username": t.user.username if t.user else "",
         "created_at": t.date.isoformat() if t.date else "",
-        "content": t.rawContent,
+        "content": strip_media_links(t.rawContent, t.links),
         "lang": t.lang,
         "reply_count": t.replyCount,
         "retweet_count": t.retweetCount,

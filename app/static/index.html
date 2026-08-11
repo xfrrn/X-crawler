@@ -102,7 +102,7 @@
                 <span class="muted">{{ fmtTime(t.created_at) }}</span>
                 <span class="mono muted">#{{ t.id }}</span>
               </div>
-              <div class="tweet-content" :class="{clamped: !t._exp}" @click="t._exp = !t._exp" :title="'点击' + (t._exp ? '收起' : '展开')">{{ t.content }}</div>
+              <div v-if="t.content" class="tweet-content" :class="{clamped: !t._exp}" @click="t._exp = !t._exp" :title="'点击' + (t._exp ? '收起' : '展开')">{{ t.content }}</div>
               <div v-if="t.media" class="tweet-media">
                 <a v-for="(img, i) in t.media.photos || []" :key="'p' + i" :href="img" target="_blank" rel="noopener" title="点击查看原图">
                   <img :src="img" loading="lazy" alt="图片">

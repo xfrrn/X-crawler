@@ -5,6 +5,8 @@ from typing import Any
 
 import aiosqlite
 
+from .scraper import strip_media_links
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS monitors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +104,24 @@ def media_from_raw_json(raw: str | None) -> dict[str, Any] | None:
     return out or None
 
 
+def clean_content_from_raw_json(raw: str | None) -> str | None:
+    """从 raw_json（twscrape `Tweet.json()` 序列化）重算正文：去掉媒体短链。
+
+    用于回填老推文——它们入库时还没这个逻辑，正文里还留着 `https://t.co/xxx`。
+    与抓取时的 `tweet_to_dict` 用同一套 `strip_media_links`，保证新老一致。
+    """
+    if not raw:
+        return None
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        return None
+    content = doc.get("rawContent")
+    if not content:
+        return None
+    return strip_media_links(content, doc.get("links") or [])
+
+
 class Database:
     def __init__(self, path: str):
         self.path = path
@@ -138,6 +158,19 @@ class Database:
                     (json.dumps(m, ensure_ascii=False), tid),
                 )
         if backfill:
+            await self._conn.commit()
+        # 回填：老推文正文里还留着已显示为图片/视频的 t.co 短链，按 raw_json 重算剥掉
+        cur = await self._conn.execute(
+            "SELECT id, raw_json, content FROM tweets WHERE content LIKE '%t.co/%'"
+        )
+        old_content = await cur.fetchall()
+        for tid, raw, content in old_content:
+            cleaned = clean_content_from_raw_json(raw)
+            if cleaned is not None and cleaned != content:
+                await self._conn.execute(
+                    "UPDATE tweets SET content = ? WHERE id = ?", (cleaned, tid)
+                )
+        if old_content:
             await self._conn.commit()
 
     async def close(self) -> None:
