@@ -88,6 +88,16 @@ uv run python -m app.cli accounts
 
 账号凭据存在 `data/accounts.db`，服务启动时自动加载。然后把 `.env` 改成 `SCRAPER_MODE=twscrape` 重启即可抓真实数据。
 
+### 代理（爬 X 必备）
+
+国内网络直连 X 会被墙，必须在 `.env` 配全局代理（所有采集账号都会走它，密码登录和 cookies 导入的都覆盖）：
+
+```
+TWS_PROXY=http://127.0.0.1:7890     # 或 socks5://127.0.0.1:1080
+```
+
+优先级：单账号 `--proxy`（仅密码登录可配）> `TWS_PROXY` 全局 > 无代理。
+
 ## API 概览
 
 所有接口都需要请求头 `Authorization: Bearer <API_KEYS 中的任意一个>`；后台面板登录后可用 session cookie 免带 Key。
@@ -135,6 +145,7 @@ uv run python -m app.cli accounts
 | `ADMIN_USERNAME` | `admin` | 后台面板登录用户名 |
 | `ADMIN_PASSWORD` | （空） | 后台面板登录密码，未设置则无法登录 |
 | `ADMIN_SESSION_SECRET` | `change-me...` | 登录 cookie 签名密钥，务必改成随机串 |
+| `TWS_PROXY` | （空） | 爬 X 全局代理，如 `http://127.0.0.1:7890`（所有采集账号生效） |
 
 ## 数据去重
 

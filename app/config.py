@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,10 @@ class Settings(BaseSettings):
     admin_password: str = ""
     admin_session_secret: str = "change-me-random-string"
 
+    # twscrape 全局代理：爬 X 需走代理（国内网络直连被墙）。
+    # 对应 twscrape 内部读取的 TWS_PROXY 环境变量，所有账号（密码登录和 cookies 导入）都会走它。
+    twscrape_proxy: str = Field(default="", validation_alias="TWS_PROXY")
+
     @property
     def api_key_list(self) -> list[str]:
         return [k.strip() for k in self.api_keys.split(",") if k.strip()]
@@ -44,4 +49,9 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    # twscrape 用 os.getenv("TWS_PROXY") 取代理，而 .env 里的值只被 pydantic 读走，
+    # 不会自动变成进程环境变量——这里手动导出（若已是真实环境变量则不覆盖）
+    if settings.twscrape_proxy:
+        os.environ.setdefault("TWS_PROXY", settings.twscrape_proxy)
+    return settings
