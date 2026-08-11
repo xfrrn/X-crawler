@@ -63,6 +63,11 @@ createApp({
     };
   },
   methods: {
+    /* 格式化工具挂到 methods，模板里才能按 _ctx.fmtXxx(...) 解析 */
+    fmtTime,
+    fmtMs,
+    fmtDur,
+
     /* ---- 通用请求：401 视为会话失效，回登录视图 ---- */
     async api(path, opts = {}) {
       const res = await fetch(path, {
