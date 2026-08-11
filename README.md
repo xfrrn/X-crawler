@@ -9,6 +9,16 @@
 - SQLite（aiosqlite 存取）+ Redis-free 内存事件总线
 - Python 3.13 / uv
 
+## 克隆
+
+twscrape 以 git submodule 引入（钉在 v0.20.0），克隆时加 `--recurse-submodules` 一步到位：
+
+```bash
+git clone --recurse-submodules <本仓库地址>
+# 若已克隆但忘了带参数：
+git submodule update --init
+```
+
 ## 快速开始
 
 ```bash
