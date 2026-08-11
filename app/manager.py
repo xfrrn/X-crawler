@@ -79,7 +79,9 @@ class MonitorManager:
 
     # ---- 监控生命周期 ----
 
-    async def add_monitor(self, username: str, interval_seconds: int | None) -> dict[str, Any]:
+    async def add_monitor(
+        self, username: str, interval_seconds: int | None, created_by: str | None = None
+    ) -> dict[str, Any]:
         interval = interval_seconds or self._settings.default_poll_interval
         user = await self._scraper.resolve_user(username)
         if user is None:
@@ -89,6 +91,7 @@ class MonitorManager:
             user_id=user.user_id,
             display_name=user.display_name,
             interval_seconds=interval,
+            created_by=created_by,
         )
         self._tasks[monitor["id"]] = asyncio.create_task(self._poll_loop(monitor["id"]))
         return monitor

@@ -54,7 +54,7 @@
           </div>
           <table>
             <thead><tr>
-              <th>ID</th><th>用户名</th><th>昵称</th><th>间隔</th><th>状态</th>
+              <th>ID</th><th>用户名</th><th>昵称</th><th>创建人</th><th>间隔</th><th>状态</th>
               <th>最近轮询</th><th>最后推文 ID</th><th>错误</th><th>操作</th>
             </tr></thead>
             <tbody>
@@ -62,6 +62,7 @@
                 <td>{{ m.id }}</td>
                 <td class="mono">{{ m.username }}</td>
                 <td>{{ m.display_name || '-' }}</td>
+                <td class="muted">{{ creatorLabel(m.created_by) }}</td>
                 <td>{{ m.interval_seconds }}s</td>
                 <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
                 <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
@@ -72,7 +73,7 @@
                   <button class="btn small danger" @click="removeMonitor(m)">删除</button>
                 </td>
               </tr>
-              <tr v-if="!monitors.length"><td colspan="9" class="empty">暂无监控，先在上方添加</td></tr>
+              <tr v-if="!monitors.length"><td colspan="10" class="empty">暂无监控，先在上方添加</td></tr>
             </tbody>
           </table>
         </div>

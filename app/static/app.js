@@ -67,6 +67,13 @@ createApp({
     fmtTime,
     fmtMs,
     fmtDur,
+    /* 创建人标记：admin:xx -> 管理员 xx；apikey:xx -> API xx */
+    creatorLabel(v) {
+      if (!v) return "-";
+      if (v.startsWith("admin:")) return "管理员 " + v.slice(6);
+      if (v.startsWith("apikey:")) return "API " + v.slice(7);
+      return v;
+    },
 
     /* ---- 通用请求：401 视为会话失效，回登录视图 ---- */
     async api(path, opts = {}) {

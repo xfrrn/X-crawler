@@ -18,6 +18,7 @@ class MonitorOut(BaseModel):
     last_seen_tweet_id: int | None
     last_poll_at: str | None
     last_error: str | None
+    created_by: str | None = None
     created_at: str
     updated_at: str
 

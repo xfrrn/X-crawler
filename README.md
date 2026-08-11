@@ -104,7 +104,7 @@ TWS_PROXY=http://127.0.0.1:7890     # 或 socks5://127.0.0.1:1080
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/monitors` | 添加监控，body `{username, interval_seconds?}` |
+| POST | `/monitors` | 添加监控，body `{username, interval_seconds?}`；自动记录创建人（后台=`admin:xx`，API=`apikey:xx`） |
 | GET | `/monitors` | 监控列表（含状态） |
 | DELETE | `/monitors/{id}` | 停止并删除监控 |
 | POST | `/monitors/{id}/resume` | 恢复被自动暂停的监控 |

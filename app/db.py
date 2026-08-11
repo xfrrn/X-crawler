@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS monitors (
     last_seen_tweet_id INTEGER,
     last_poll_at TEXT,
     last_error TEXT,
+    created_by TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -66,6 +67,11 @@ class Database:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
+        # 轻量迁移：老库的 monitors 表补 created_by 列（记录谁创建的监控）
+        cols = {row[1] for row in await (await self._conn.execute("PRAGMA table_info(monitors)")).fetchall()}
+        if "created_by" not in cols:
+            await self._conn.execute("ALTER TABLE monitors ADD COLUMN created_by TEXT")
+            await self._conn.commit()
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -80,14 +86,15 @@ class Database:
         user_id: int | None,
         display_name: str | None,
         interval_seconds: int,
+        created_by: str | None = None,
     ) -> dict[str, Any]:
         ts = now_iso()
         cur = await self.conn.execute(
             """
-            INSERT INTO monitors (username, user_id, display_name, interval_seconds, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO monitors (username, user_id, display_name, interval_seconds, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (username, user_id, display_name, interval_seconds, ts, ts),
+            (username, user_id, display_name, interval_seconds, created_by, ts, ts),
         )
         await self.conn.commit()
         return await self.get_monitor(cur.lastrowid)

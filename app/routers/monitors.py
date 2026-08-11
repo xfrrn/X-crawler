@@ -9,9 +9,14 @@ router = APIRouter(prefix="/monitors", tags=["monitors"], dependencies=[Depends(
 
 
 @router.post("", response_model=MonitorOut, status_code=201)
-async def create_monitor(payload: MonitorCreate) -> MonitorOut:
+async def create_monitor(
+    payload: MonitorCreate,
+    creator: str = Depends(require_api_key),
+) -> MonitorOut:
     try:
-        monitor = await state.manager.add_monitor(payload.username, payload.interval_seconds)
+        monitor = await state.manager.add_monitor(
+            payload.username, payload.interval_seconds, created_by=creator
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except NoAccountError:
