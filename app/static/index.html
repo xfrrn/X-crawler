@@ -168,7 +168,7 @@
           <div v-if="pMsg" class="alert" :class="pMsgOk ? 'ok' : 'error'">{{ pMsg }}</div>
           <table>
             <thead><tr>
-              <th>ID</th><th>平台</th><th>展示名</th><th>creator_id</th><th>创建人</th><th>状态</th>
+              <th>ID</th><th>平台</th><th>展示名</th><th>creator_id</th><th>创建人</th><th>状态</th><th>抓取状态</th>
               <th>最近轮询</th><th>错误</th><th>操作</th>
             </tr></thead>
             <tbody>
@@ -179,6 +179,7 @@
                 <td class="mono muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis" :title="m.creator_id">{{ m.creator_id }}</td>
                 <td class="muted">{{ creatorLabel(m.created_by) }}</td>
                 <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
+                <td><span class="badge crawl" :class="platCrawlStatus(m.platform).cls" :title="platRunTip(m.platform)">{{ platCrawlStatus(m.platform).text }}</span></td>
                 <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
                 <td class="err-cell" :title="m.last_error">{{ m.last_error || '' }}</td>
                 <td class="ops">
@@ -186,7 +187,7 @@
                   <button class="btn small danger" @click="removePlatformMonitor(m)">停止</button>
                 </td>
               </tr>
-              <tr v-if="!pmonitors.length"><td colspan="9" class="empty">暂无平台监控，先在上方添加</td></tr>
+              <tr v-if="!pmonitors.length"><td colspan="10" class="empty">暂无平台监控，先在上方添加</td></tr>
             </tbody>
           </table>
         </div>

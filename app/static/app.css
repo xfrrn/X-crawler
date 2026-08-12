@@ -181,6 +181,13 @@ td.ops { white-space: nowrap; }
 .badge.off { background: rgba(245, 158, 11, .15); color: var(--off); }
 .err { color: var(--err); font-weight: 600; }
 
+/* ---- 抓取状态（平台监控）---- */
+.badge.crawl.busy { background: rgba(37, 99, 235, .18); color: #93c5fd; animation: crawl-pulse 1.6s ease-in-out infinite; }
+.badge.crawl.wait { background: rgba(148, 163, 184, .15); color: var(--muted); }
+.badge.crawl.ok { background: rgba(34, 197, 94, .15); color: var(--ok); }
+.badge.crawl.error { background: rgba(239, 68, 68, .15); color: var(--err); }
+@keyframes crawl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
 /* ---- 统计卡片 ---- */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .stat-card {

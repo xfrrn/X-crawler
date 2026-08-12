@@ -253,6 +253,29 @@ createApp({
       const m = this.pmonitors.find((x) => x.id === mid);
       return m ? m.label : "#" + mid;
     },
+    /* 抓取状态：按平台 runtime 推导（同一平台的监控共用同一个子进程）。
+       正在抓取 = 子进程在跑；抓取完成 = 上次跑成功；抓取失败 = 上次跑抛异常；
+       等待中 = 还没跑过（等首次定时轮询）。 */
+    platCrawlStatus(plat) {
+      const rt = (this.pStats.runtime || []).find((r) => r.platform === plat);
+      if (rt && rt.running) return { text: "正在抓取", cls: "busy", rt };
+      if (rt && rt.total_runs > 0) {
+        return rt.consecutive_errors > 0
+          ? { text: "抓取失败", cls: "error", rt }
+          : { text: "抓取完成", cls: "ok", rt };
+      }
+      return { text: "等待中", cls: "wait", rt };
+    },
+    platRunTip(plat) {
+      const st = this.platCrawlStatus(plat);
+      const rt = st.rt;
+      if (!rt || !rt.total_runs) return "尚未抓取，等待定时轮询或手动「立即抓取」";
+      const parts = [`已跑 ${rt.total_runs} 次`];
+      if (rt.last_run_ms != null) parts.push(`上次耗时 ${this.fmtMs(rt.last_run_ms)}`);
+      if (rt.total_new > 0) parts.push(`共新增 ${rt.total_new} 条`);
+      if (st.text === "抓取失败") parts.push("原因见错误列 / data/logs 日志");
+      return parts.join(" · ");
+    },
     async loadPlatformMonitors() {
       try {
         this.pmonitors = await this.api("/platform/monitors");
