@@ -16,7 +16,7 @@
       <div v-if="loginError" class="alert error">{{ loginError }}</div>
       <input v-model.trim="loginForm.username" type="text" placeholder="用户名" autocomplete="username" required>
       <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" required>
-      <button type="submit" class="primary" :disabled="loggingIn">{{ loggingIn ? '登录中…' : '登 录' }}</button>
+      <button type="submit" class="btn primary" :disabled="loggingIn">{{ loggingIn ? '登录中…' : '登 录' }}</button>
     </form>
   </div>
 
@@ -40,7 +40,7 @@
           <form class="inline-form" @submit.prevent="addMonitor">
             <input v-model.trim="monForm.username" placeholder="要监控的 Twitter 用户名" required>
             <input v-model.number="monForm.interval" type="number" min="1" max="3600" placeholder="轮询间隔(秒)" style="width:150px">
-            <button type="submit" class="primary" :disabled="monAdding">{{ monAdding ? '添加中…' : '添加监控' }}</button>
+            <button type="submit" class="btn primary" :disabled="monAdding">{{ monAdding ? '添加中…' : '添加监控' }}</button>
           </form>
           <div v-if="monError" class="alert error">{{ monError }}</div>
         </div>
@@ -187,13 +187,13 @@
               <input v-model="pwForm.email" placeholder="邮箱（可选，用于登录验证码）">
               <input v-model="pwForm.email_password" type="password" placeholder="邮箱密码（可选）" autocomplete="new-password">
               <input v-model="pwForm.proxy" placeholder="代理 http://user:pass@host:port（可选，默认全局代理）">
-              <button type="submit" class="primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '添加并登录' }}</button>
+              <button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '添加并登录' }}</button>
             </form>
             <form class="acc-form" @submit.prevent="addAccountByCookies">
               <h3>导入 cookies（更稳）</h3>
               <input v-model.trim="ckForm.username" placeholder="用户名" required>
               <textarea v-model="ckForm.cookies" rows="4" placeholder='形如 "auth_token=...; ct0=..."（浏览器登录 X 后，开发者工具 → 网络 → 请求头里复制）' required></textarea>
-              <button type="submit" class="primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '导入' }}</button>
+              <button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '导入' }}</button>
             </form>
           </div>
           <p class="muted" style="margin-top:10px">可用 = 已登录且未锁定；登录失败或会话失效的账号可点「重新登录」重试。</p>
