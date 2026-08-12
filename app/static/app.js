@@ -48,6 +48,24 @@ function fmtDur(s) {
   if (m > 0) return m + "m " + sec + "s";
   return sec + "s";
 }
+/* 大数缩写：12345 → "1.2万"，1200 → "1.2k"（保留 1 位小数，去尾零） */
+function r1(x) {
+  return String(Math.round(x * 10) / 10).replace(/\.0$/, "");
+}
+function fmtNum(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return n ?? "0";
+  const abs = Math.abs(v);
+  if (abs >= 1e8) return r1(v / 1e8) + "亿";
+  if (abs >= 1e4) return r1(v / 1e4) + "万";
+  if (abs >= 1e3) return r1(v / 1e3) + "k";
+  return String(v);
+}
+/* 超长 ID 截断：7414000156015742245 → "7414…2245"（title 里给全） */
+function shortId(id, head = 4, tail = 4) {
+  const s = String(id == null ? "" : id);
+  return s.length > head + tail + 1 ? s.slice(0, head) + "…" + s.slice(-tail) : s;
+}
 
 createApp({
   data() {
@@ -83,6 +101,8 @@ createApp({
       pMsg: "",
       pMsgOk: false,
       pStats: {},
+      // 「立即抓取」默认平台（平台监控列表卡片头的下拉）
+      runPlat: "xhs",
       // 平台内容
       pposts: [],
       pPlat: "xhs",
@@ -105,6 +125,8 @@ createApp({
     fmtTime,
     fmtMs,
     fmtDur,
+    fmtNum,
+    shortId,
     /* 视频时长毫秒 -> " 12s"（面板推文媒体用） */
     dur(ms) {
       if (!ms) return "";

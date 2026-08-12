@@ -43,7 +43,7 @@
           <h2>添加监控</h2>
           <form class="inline-form" @submit.prevent="addMonitor">
             <input v-model.trim="monForm.username" placeholder="要监控的 Twitter 用户名" required>
-            <input v-model.number="monForm.interval" type="number" min="1" max="3600" placeholder="轮询间隔(秒)" style="width:150px">
+            <input v-model.number="monForm.interval" type="number" min="1" max="3600" placeholder="轮询间隔(秒)" class="w-150">
             <button type="submit" class="btn primary" :disabled="monAdding">{{ monAdding ? '添加中…' : '添加监控' }}</button>
           </form>
           <div v-if="monError" class="alert error">{{ monError }}</div>
@@ -56,6 +56,7 @@
             <div class="spacer"></div>
             <button class="btn ghost" @click="loadMonitors">刷新</button>
           </div>
+          <div class="tbl-scroll">
           <table>
             <thead><tr>
               <th>ID</th><th>用户名</th><th>昵称</th><th>创建人</th><th>间隔</th><th>状态</th>
@@ -70,16 +71,17 @@
                 <td>{{ m.interval_seconds }}s</td>
                 <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
                 <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
-                <td class="mono muted">{{ m.last_seen_tweet_id ?? '-' }}</td>
+                <td class="mono muted" :title="m.last_seen_tweet_id ? '完整ID ' + m.last_seen_tweet_id : ''">{{ m.last_seen_tweet_id ? shortId(m.last_seen_tweet_id) : '-' }}</td>
                 <td class="err-cell" :title="m.last_error">{{ m.last_error || '' }}</td>
                 <td class="ops">
-                  <button v-if="!m.active" class="btn small" @click="resumeMonitor(m)">恢复</button>
+                  <button v-if="!m.active" class="btn small ghost" @click="resumeMonitor(m)">恢复</button>
                   <button class="btn small danger" @click="removeMonitor(m)">删除</button>
                 </td>
               </tr>
               <tr v-if="!monitors.length"><td colspan="10" class="empty">暂无监控，先在上方添加</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </section>
 
@@ -91,7 +93,7 @@
               <option :value="null" disabled>选择监控</option>
               <option v-for="m in monitors" :key="m.id" :value="m.id">{{ m.username }} (#{{ m.id }})</option>
             </select>
-            <input v-model.number="tweetLimit" type="number" min="1" max="200" placeholder="条数" style="width:90px">
+            <input v-model.number="tweetLimit" type="number" min="1" max="200" placeholder="条数" class="w-90">
             <button class="btn ghost" @click="loadTweets">刷新</button>
             <span v-if="tweetsLoading" class="muted">加载中…</span>
             <span v-else class="muted">共 {{ tweets.length }} 条（每 10s 自动刷新）</span>
@@ -104,7 +106,7 @@
               <div class="tweet-head">
                 <span class="mono">@{{ t.username }}</span>
                 <span class="muted">{{ fmtTime(t.created_at) }}</span>
-                <span class="mono muted">#{{ t.id }}</span>
+                <span class="mono muted" :title="'完整ID ' + t.id">#{{ shortId(t.id) }}</span>
               </div>
               <div v-if="t.content" class="tweet-content" :class="{clamped: !t._exp}" @click="t._exp = !t._exp" :title="'点击' + (t._exp ? '收起' : '展开')">{{ t.content }}</div>
               <div v-if="t.media" class="tweet-media">
@@ -119,9 +121,9 @@
                 </a>
               </div>
               <div class="tweet-meta">
-                <span>赞 {{ t.like_count ?? 0 }}</span>
-                <span>转 {{ t.retweet_count ?? 0 }}</span>
-                <span>回 {{ t.reply_count ?? 0 }}</span>
+                <span>赞 {{ fmtNum(t.like_count ?? 0) }}</span>
+                <span>转 {{ fmtNum(t.retweet_count ?? 0) }}</span>
+                <span>回 {{ fmtNum(t.reply_count ?? 0) }}</span>
                 <span v-if="t.lang" class="muted">[{{ t.lang }}]</span>
               </div>
             </div>
@@ -146,12 +148,12 @@
             <select v-model="pmForm.platform">
               <option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option>
             </select>
-            <input v-model.trim="pmForm.creator_id" placeholder="博主主页 URL 或 ID（见下方说明）" style="min-width:300px" required>
-            <input v-model.trim="pmForm.label" placeholder="展示名（昵称已脱敏，必填）" style="width:200px" required>
+            <input v-model.trim="pmForm.creator_id" placeholder="博主主页 URL 或 ID（见下方说明）" class="w-300" required>
+            <input v-model.trim="pmForm.label" placeholder="展示名（昵称已脱敏，必填）" class="w-200" required>
             <button type="submit" class="btn primary" :disabled="pmAdding">{{ pmAdding ? '添加中…' : '添加监控' }}</button>
           </form>
           <div v-if="pmError" class="alert error">{{ pmError }}</div>
-          <p class="muted" style="margin-top:8px">
+          <p class="hint">
             小红书：填带 xsec_token 的完整主页链接；抖音/快手：填主页链接或裸 ID。
             每个博主每轮最多抓取最新 15 条，重复内容自动去重、数据更新。
           </p>
@@ -162,10 +164,16 @@
             <h2>平台监控列表</h2>
             <span class="muted">{{ pmonitors.length }} 个监控</span>
             <div class="spacer"></div>
-            <button v-for="pl in platforms" :key="'run' + pl.key" class="btn ghost" style="margin-right:6px" @click="triggerPlatformRun(pl.key)">立即抓取{{ pl.name }}</button>
-            <button class="btn ghost" @click="loadPlatformMonitors">刷新</button>
+            <div class="run-form">
+              <select v-model="runPlat" class="w-auto" aria-label="选择要抓取的平台">
+                <option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option>
+              </select>
+              <button class="btn primary" @click="triggerPlatformRun(runPlat)">立即抓取</button>
+              <button class="btn ghost" @click="loadPlatformMonitors">刷新</button>
+            </div>
           </div>
           <div v-if="pMsg" class="alert" :class="pMsgOk ? 'ok' : 'error'">{{ pMsg }}</div>
+          <div class="tbl-scroll">
           <table>
             <thead><tr>
               <th>ID</th><th>平台</th><th>展示名</th><th>creator_id</th><th>创建人</th><th>状态</th><th>抓取状态</th>
@@ -176,20 +184,21 @@
                 <td>{{ m.id }}</td>
                 <td>{{ platName(m.platform) }}</td>
                 <td>{{ m.label }}</td>
-                <td class="mono muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis" :title="m.creator_id">{{ m.creator_id }}</td>
+                <td class="mono muted ellipsis w-260" :title="m.creator_id">{{ m.creator_id }}</td>
                 <td class="muted">{{ creatorLabel(m.created_by) }}</td>
                 <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
                 <td><span class="badge crawl" :class="platCrawlStatus(m.platform).cls" :title="platRunTip(m.platform)">{{ platCrawlStatus(m.platform).text }}</span></td>
                 <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
                 <td class="err-cell" :title="m.last_error">{{ m.last_error || '' }}</td>
                 <td class="ops">
-                  <button v-if="!m.active" class="btn small" @click="resumePlatformMonitor(m)">恢复</button>
+                  <button v-if="!m.active" class="btn small ghost" @click="resumePlatformMonitor(m)">恢复</button>
                   <button class="btn small danger" @click="removePlatformMonitor(m)">停止</button>
                 </td>
               </tr>
               <tr v-if="!pmonitors.length"><td colspan="10" class="empty">暂无平台监控，先在上方添加</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </section>
 
@@ -204,7 +213,7 @@
               <option :value="null" disabled>选择博主</option>
               <option v-for="m in pmOfPlat(pPlat)" :key="m.id" :value="m.id">{{ m.label }} (#{{ m.id }})</option>
             </select>
-            <input v-model.number="pLimit" type="number" min="1" max="200" placeholder="条数" style="width:90px">
+            <input v-model.number="pLimit" type="number" min="1" max="200" placeholder="条数" class="w-90">
             <button class="btn ghost" @click="loadPlatformPosts">刷新</button>
             <span v-if="pLoading" class="muted">加载中…</span>
             <span v-else class="muted">共 {{ pposts.length }} 条（每 10s 自动刷新）</span>
@@ -217,7 +226,7 @@
               <div class="tweet-head">
                 <span class="mono">{{ pmLabel(p.monitor_id) }}</span>
                 <span class="muted">{{ fmtTime(p.created_at) }}</span>
-                <span class="mono muted">#{{ p.content_id }}</span>
+                <span class="mono muted" :title="'完整ID ' + p.content_id">#{{ shortId(p.content_id) }}</span>
               </div>
               <div v-if="p.title || p.content" class="tweet-content" :class="{clamped: !p._exp}" @click="p._exp = !p._exp" :title="'点击' + (p._exp ? '收起' : '展开')">
                 <template v-if="p.title && p.title !== p.content"><strong>{{ p.title }}</strong><br></template>{{ p.content }}
@@ -233,10 +242,10 @@
                 </a>
               </div>
               <div class="tweet-meta">
-                <span v-if="p.stats && p.stats.likes != null">赞 {{ p.stats.likes }}</span>
-                <span v-if="p.stats && p.stats.comments != null">评 {{ p.stats.comments }}</span>
-                <span v-if="p.stats && p.stats.shares != null">转 {{ p.stats.shares }}</span>
-                <span v-if="p.stats && p.stats.views != null">看 {{ p.stats.views }}</span>
+                <span v-if="p.stats && p.stats.likes != null">赞 {{ fmtNum(p.stats.likes) }}</span>
+                <span v-if="p.stats && p.stats.comments != null">评 {{ fmtNum(p.stats.comments) }}</span>
+                <span v-if="p.stats && p.stats.shares != null">转 {{ fmtNum(p.stats.shares) }}</span>
+                <span v-if="p.stats && p.stats.views != null">看 {{ fmtNum(p.stats.views) }}</span>
               </div>
             </div>
           </div>
@@ -263,6 +272,7 @@
             <div class="spacer"></div>
             <button class="btn ghost" @click="loadStats">刷新</button>
           </div>
+          <div class="tbl-scroll">
           <table>
             <thead><tr>
               <th>ID</th><th>用户名</th><th>基础间隔</th><th>当前间隔</th><th>连续错误</th>
@@ -283,6 +293,7 @@
               <tr v-if="!stats.monitors_detail || !stats.monitors_detail.length"><td colspan="9" class="empty">暂无监控</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </section>
 
@@ -314,7 +325,7 @@
               <button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '导入' }}</button>
             </form>
           </div>
-          <p class="muted" style="margin-top:10px">可用 = 已登录且未锁定；登录失败或会话失效的账号可点「重新登录」重试。</p>
+          <p class="hint">可用 = 已登录且未锁定；登录失败或会话失效的账号可点「重新登录」重试。</p>
         </div>
 
         <div class="card">
@@ -323,6 +334,7 @@
             <div class="spacer"></div>
             <button class="btn ghost" @click="loadAccounts">刷新</button>
           </div>
+          <div class="tbl-scroll">
           <table>
             <thead><tr>
               <th>用户名</th><th>可用性</th><th>登录方式</th><th>最近使用</th><th>请求量</th><th>错误</th><th>操作</th>
@@ -336,13 +348,14 @@
                 <td>{{ a.total_req ?? 0 }}</td>
                 <td class="err-cell" :title="a.error_msg">{{ a.error_msg || '' }}</td>
                 <td class="ops">
-                  <button class="btn small" @click="reloginAccount(a)">重新登录</button>
+                  <button class="btn small ghost" @click="reloginAccount(a)">重新登录</button>
                   <button class="btn small danger" @click="removeAccount(a)">删除</button>
                 </td>
               </tr>
               <tr v-if="!acc.accounts || !acc.accounts.length"><td colspan="7" class="empty">没有采集账号，先在上方添加</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </section>
     </main>
