@@ -228,16 +228,19 @@ class MediaCrawlerEngine:
                 f"MediaCrawler 超时(>{self._settings.mc_subprocess_timeout}s): {platform} {','.join(creator_ids)}"
             )
         output = out_bytes.decode("utf-8", errors="replace")
+        log_path = self._persist_output(platform, output)
         if proc.returncode != 0:
             raise MediaCrawlerError(
                 f"MediaCrawler 退出码 {proc.returncode}: {output[-2000:]}"
+                f"（完整日志: {log_path}）"
             )
 
         # 读产物（子进程已退出，SQLAlchemy 已 commit，只读无锁冲突）
         db_path = repo / "database" / "sqlite_tables.db"
         if not os.path.exists(db_path):
             raise MediaCrawlerError(
-                "MediaCrawler 未生成 sqlite 库（可能登录失败/未跑到写库步骤）"
+                "MediaCrawler 未生成 sqlite 库（可能登录失败/未跑到写库步骤），"
+                f"完整日志: {log_path}"
             )
         table = PLATFORM_TABLE[platform]
         reader = await aiosqlite.connect(db_path)
@@ -268,9 +271,36 @@ class MediaCrawlerEngine:
             normalized.append(p)
 
         new_posts = await self._db.upsert_platform_posts(normalized)
+        logger.info(
+            "[platform] %s 完成: 退出码 %s, 产物 %d 行, 新入库 %d 条（日志: %s）",
+            platform, proc.returncode, len(rows), len(new_posts), log_path,
+        )
         return EngineResult(
             new_posts=new_posts,
             raw_count=len(rows),
             exit_code=proc.returncode,
             output_tail=output[-2000:],
         )
+
+    def _persist_output(self, platform: str, output: str) -> Path:
+        """把子进程完整输出追加落盘。
+
+        MediaCrawler 的日志只打到它自己的 stderr，被我们捕获后不落盘就无处可查
+        （成功时丢弃、出错时也只有内存里的 2000 字符尾部）。每次抓取都留档一份，
+        下次失败时直接翻 data/logs/ 就能看到完整原因。
+        """
+        log_path = Path(self._settings.data_dir) / "logs" / f"platform_{platform}.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            header = (
+                f"\n===== {datetime.now(timezone.utc).isoformat()} "
+                f"开始抓取 {platform} ====="
+            )
+            with log_path.open("a", encoding="utf-8", errors="replace") as f:
+                f.write(header + "\n")
+                f.write(output)
+                if not output.endswith("\n"):
+                    f.write("\n")
+        except Exception:
+            logger.warning("[platform] 无法写子进程日志: %s", log_path, exc_info=True)
+        return log_path

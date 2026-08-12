@@ -130,7 +130,10 @@ class PlatformScheduler:
             raise
         except Exception as e:
             rt.consecutive_errors += 1
-            msg = f"平台{platform}抓取失败: {e}"
+            # 有些异常 str(e) 是空串（如 asyncio.TimeoutError），光写 ": " 用户看不出原因，
+            # 退而给出异常类型；子进程输出的完整日志在 engine 侧已落盘 data/logs/
+            detail = str(e) if str(e) else f"{type(e).__name__}（无异常信息）"
+            msg = f"平台{platform}抓取失败: {detail}"
             for m in active:
                 await self._db.mark_platform_poll(m["id"], msg)
             if rt.consecutive_errors >= self._settings.pause_after_errors:
