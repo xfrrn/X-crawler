@@ -209,25 +209,28 @@ class MediaCrawlerEngine:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         logger.info("[platform] 启动子进程: %s", " ".join(cmd))
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=repo,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            creationflags=flags,
-        )
-        try:
-            out_bytes, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=self._settings.mc_subprocess_timeout
+        # Windows 上 uvicorn --reload 会用 SelectorEventLoop，它不支持
+        # asyncio.create_subprocess_exec（抛无消息的 NotImplementedError，之前一直
+        # 表现为"抓取失败"且看不到原因）。把阻塞的 subprocess.run 丢进线程池跑，
+        # 任何事件循环下都能 spawn 子进程；超时由 subprocess.run 内部处理。
+        def _run_sync() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                cmd,
+                cwd=repo,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=self._settings.mc_subprocess_timeout,
+                creationflags=flags,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+
+        try:
+            proc = await asyncio.to_thread(_run_sync)
+        except subprocess.TimeoutExpired:
             raise MediaCrawlerError(
                 f"MediaCrawler 超时(>{self._settings.mc_subprocess_timeout}s): {platform} {','.join(creator_ids)}"
             )
-        output = out_bytes.decode("utf-8", errors="replace")
+        output = (proc.stdout or b"").decode("utf-8", errors="replace")
         log_path = self._persist_output(platform, output)
         if proc.returncode != 0:
             raise MediaCrawlerError(

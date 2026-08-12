@@ -42,28 +42,34 @@ def _sha256(path: Path) -> str:
 async def _run(
     cmd: list[str], cwd: Path, timeout: int, extra_env: dict[str, str] | None = None
 ) -> tuple[int, str]:
-    """跑子进程，返回 (returncode, 输出尾部)。Windows 隐藏控制台窗口 + UTF-8。"""
+    """跑子进程，返回 (returncode, 输出尾部)。Windows 隐藏控制台窗口 + UTF-8。
+
+    用阻塞 subprocess.run 放进线程池（asyncio.to_thread），避免 Windows 上
+    uvicorn --reload 用 SelectorEventLoop（不支持 asyncio.create_subprocess_exec）。
+    """
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     if extra_env:
         env.update(extra_env)
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=cwd,
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        creationflags=flags,
-    )
+
+    def _sync() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            creationflags=flags,
+        )
+
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return proc.returncode, f"<timeout>{timeout}s>"
-    return proc.returncode, out.decode("utf-8", errors="replace")
+        proc = await asyncio.to_thread(_sync)
+    except subprocess.TimeoutExpired:
+        return -1, f"<timeout>{timeout}s>"
+    return proc.returncode, (proc.stdout or b"").decode("utf-8", errors="replace")
 
 
 def _chromium_installed() -> bool:
