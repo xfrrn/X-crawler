@@ -1,14 +1,26 @@
 /* X-Crawler 管理面板 SPA（无构建，直接加载 vue.global.prod.js） */
 const { createApp } = Vue;
 
-const PAGES = [
-  { key: "monitors", path: "#/monitors", label: "监控管理" },
-  { key: "tweets", path: "#/tweets", label: "推文浏览" },
-  { key: "pmonitors", path: "#/pmonitors", label: "平台监控" },
-  { key: "pposts", path: "#/pposts", label: "平台内容" },
-  { key: "stats", path: "#/stats", label: "统计看板" },
-  { key: "accounts", path: "#/accounts", label: "采集账号" },
+/* 左侧导航：X（推特）与多平台（抖音/快手/小红书）两组分开 */
+const GROUPS = [
+  {
+    name: "X · 推特",
+    pages: [
+      { key: "monitors", path: "#/monitors", label: "监控管理" },
+      { key: "tweets", path: "#/tweets", label: "推文浏览" },
+      { key: "stats", path: "#/stats", label: "统计看板" },
+      { key: "accounts", path: "#/accounts", label: "采集账号" },
+    ],
+  },
+  {
+    name: "抖音 / 快手 / 小红书",
+    pages: [
+      { key: "pmonitors", path: "#/pmonitors", label: "平台监控" },
+      { key: "pposts", path: "#/pposts", label: "平台内容" },
+    ],
+  },
 ];
+const PAGES = GROUPS.flatMap((g) => g.pages);
 
 function currentRoute() {
   const h = location.hash.replace(/^#\/?/, "");
@@ -40,7 +52,7 @@ function fmtDur(s) {
 createApp({
   data() {
     return {
-      pages: PAGES,
+      groups: GROUPS,
       route: currentRoute(),
       // 登录态
       authed: false,
