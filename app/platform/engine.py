@@ -201,6 +201,11 @@ class MediaCrawlerEngine:
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        # MediaCrawler 的 CDP 模式用 httpx 连 localhost:9222 发现调试 URL。
+        # 本机若配了 Clash 类系统代理，httpx(trust_env) 会把 localhost 也丢给
+        # 代理 → 502，CDP 永远连不上。强制本地地址绕过代理直连。
+        env["NO_PROXY"] = "localhost,127.0.0.1,::1"
+        env["no_proxy"] = "localhost,127.0.0.1,::1"
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         logger.info("[platform] 启动子进程: %s", " ".join(cmd))
 

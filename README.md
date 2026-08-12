@@ -111,9 +111,43 @@ X 之外，本服务也能以**子进程**方式驱动外部 [MediaCrawler](http
 1. MediaCrawler 以 **git submodule** 自带（`./mediacrawler`，克隆时 `--recurse-submodules` 拉全）。
    **服务首次启动会自动初始化**它：`uv sync` 建 venv → 应用补丁 → 安装 Playwright Chromium，
    之后每次启动走快路径毫秒级跳过。`.env` 里 `MC_REPO_PATH` 默认 `./mediacrawler`。
-2. 登录方式二选一：
-   - **cookie**：浏览器登录平台后，把 Cookie 填进对应的 `MC_COOKIES_XHS` / `MC_COOKIES_DY` / `MC_COOKIES_KS`（小红书填 `web_session=...` 即可）。适合本机长期运行。
-   - **CDP**：用已登录的 Chrome 以 `chrome.exe --remote-debugging-port=9222` 启动后保持登录，MediaCrawler 默认 CDP 直连（此时 `MC_LOGIN_TYPE=qrcode`/`phone` 仅首登用，别和 CDP 同时开）。
+2. 登录方式二选一（**推荐 CDP**，见下节）：
+   - **CDP**：连一个已登录目标平台的 Chrome，最稳、反检测最好。
+   - **cookie**：浏览器登录平台后，把 Cookie 填进对应的 `MC_COOKIES_XHS` / `MC_COOKIES_DY` / `MC_COOKIES_KS`（小红书填 `web_session=...` 即可），作为 CDP 连不上时的回退。
+
+#### CDP 浏览器启动方法（推荐）
+
+本版 MediaCrawler **默认开启 CDP 模式**（`ENABLE_CDP_MODE=True` 硬编码，连本机 9222 端口）。
+抓取时它优先复用 CDP Chrome 里已登录的账号（`--lt` 和 `MC_COOKIES_*` 会被忽略）；
+CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
+
+**第一步：启动带远程调试的 Chrome（每次抓取前保持运行）**
+
+```cmd
+:: 先完全退出所有 Chrome，再执行（务必带 --user-data-dir 独立目录）：
+"C:\Program Files\Google\Chrome\Application\chrome.exe" ^
+  --no-proxy-server ^
+  --remote-debugging-port=9222 ^
+  --user-data-dir=C:\code\MyGit\X-Crawler\browser_data\cdp
+```
+
+> ⚠️ 若普通 Chrome 已在运行，新启的带 flag 实例只会变成普通窗口、**不会开 9222**——必须
+> 先全退出再用独立 `--user-data-dir` 启动。登录态存在该 profile，重启 Chrome 依然在。
+>
+> 🔌 `--no-proxy-server`：这个浏览器只访问抖音/快手/小红书等国内平台，直接连接、不走
+> 系统代理（不依赖 Clash 是否运行）。若你的网络必须靠代理才能访问这些站，去掉此参数即可。
+
+**第二步**：在**这个窗口**里登录抖音 / 快手 / 小红书（三平台一起登录也没问题）。
+
+**第三步**：`.env` 保持 `MC_HEADLESS=false`、`MC_COOKIES_*` 可留空（想双保险就也填上）。
+然后照常启动服务，面板「平台监控」添加博主 →「立即抓取」，抓取即走 CDP。
+
+> 💡 **本机配了 Clash 类系统代理也别怕**：MediaCrawler 发现 CDP 调试地址时走 httpx，
+> 系统代理会把 `localhost` 一起劫持导致连不上（返回 502）。服务已自动给 MediaCrawler
+> 子进程注入 `NO_PROXY=localhost,127.0.0.1` 绕过，无需手动处理。
+
+> 想省去手动开浏览器：把 `mediacrawler/config/base_config.py` 的 `CDP_CONNECT_EXISTING` 改为
+> `False`，MediaCrawler 会自动检测 Chrome 路径并自己拉起——但登录态每次要重新来，不推荐。
 
 > ⚠️ **MediaCrawler 补丁**：抖音/快手两个 client 原代码**不遵守** `--crawler_max_notes_count` 上限（会无上限翻页）。本仓库在 `patches/mediacrawler/` 下存放已补丁的完整文件（对
 > `media_platform/douyin/client.py` 的 `get_all_user_aweme_posts` 和 `media_platform/kuaishou/client.py`
