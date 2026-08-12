@@ -426,12 +426,13 @@ class Database:
                 await self.conn.execute(
                     """
                     UPDATE platform_posts
-                    SET monitor_id = ?, title = ?, content = ?, created_at = ?,
+                    SET monitor_id = ?, creator_hash = ?, title = ?, content = ?, created_at = ?,
                         image_urls = ?, video_url = ?, cover_url = ?, stats = ?, raw_json = ?
                     WHERE platform = ? AND content_id = ?
                     """,
                     (
                         p.get("monitor_id"),
+                        p.get("creator_hash"),
                         p.get("title"),
                         p.get("content"),
                         p.get("created_at"),

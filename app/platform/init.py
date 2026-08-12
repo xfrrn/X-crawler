@@ -17,7 +17,10 @@ from ..config import Settings
 logger = logging.getLogger(__name__)
 
 # 补丁清单：仓库内已打补丁的完整文件 → submodule 内目标文件（相对 mediacrawler 根）
-# 说明：dy/ks 原代码不尊重 --crawler_max_notes_count 上限，需替换这两个文件；
+# 说明：
+#  - dy/ks 的 client.py 原代码不尊重 --crawler_max_notes_count 上限，需替换；
+#  - dy 的 store/douyin/__init__.py 用 author.uid（数字）做创作者匿名哈希，而监控侧存的是
+#    sec_user_id，归属永远对不上 → 改为哈希 author.sec_uid（与查询串同值），帖子才能落对监控；
 # MediaCrawler 行尾是 CRLF，git apply 打不上，故用整文件复制 + sha256 判定幂等。
 _PATCHES = [
     (
@@ -29,6 +32,11 @@ _PATCHES = [
         Path(__file__).resolve().parents[2]
         / "patches" / "mediacrawler" / "media_platform" / "kuaishou" / "client.py",
         Path("media_platform") / "kuaishou" / "client.py",
+    ),
+    (
+        Path(__file__).resolve().parents[2]
+        / "patches" / "mediacrawler" / "store" / "douyin" / "__init__.py",
+        Path("store") / "douyin" / "__init__.py",
     ),
 ]
 
