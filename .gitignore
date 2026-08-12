@@ -3,3 +3,9 @@ data/
 .venv/
 __pycache__/
 *.pyc
+
+# 代理工具（kill-ai-slop 等 skill）安装目录，非项目代码
+.agents/
+.claude/
+skills-lock.json
+node_modules/

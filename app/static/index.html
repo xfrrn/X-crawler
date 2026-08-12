@@ -108,16 +108,16 @@
                   <img :src="img" loading="lazy" alt="图片">
                 </a>
                 <a v-for="(v, i) in t.media.videos || []" :key="'v' + i" :href="(v.urls && v.urls.length) ? v.urls[v.urls.length - 1] : v.cover" target="_blank" rel="noopener" title="点击播放视频">
-                  <img :src="v.cover" loading="lazy" alt="视频"><span class="tplay">▶ 视频{{ dur(v.duration_ms) }}</span>
+                  <img :src="v.cover" loading="lazy" alt="视频"><span class="tplay">视频{{ dur(v.duration_ms) }}</span>
                 </a>
                 <a v-for="(g, i) in t.media.gifs || []" :key="'g' + i" :href="g.url || g.cover" target="_blank" rel="noopener" title="点击查看 GIF">
-                  <img :src="g.cover" loading="lazy" alt="GIF"><span class="tplay">▶ GIF</span>
+                  <img :src="g.cover" loading="lazy" alt="GIF"><span class="tplay">GIF</span>
                 </a>
               </div>
               <div class="tweet-meta">
-                <span>♥ {{ t.like_count ?? 0 }}</span>
-                <span>↻ {{ t.retweet_count ?? 0 }}</span>
-                <span>💬 {{ t.reply_count ?? 0 }}</span>
+                <span>赞 {{ t.like_count ?? 0 }}</span>
+                <span>转 {{ t.retweet_count ?? 0 }}</span>
+                <span>回 {{ t.reply_count ?? 0 }}</span>
                 <span v-if="t.lang" class="muted">[{{ t.lang }}]</span>
               </div>
             </div>
