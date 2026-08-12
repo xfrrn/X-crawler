@@ -127,6 +127,119 @@
         </div>
       </section>
 
+      <!-- ================= 平台监控 ================= -->
+      <section v-if="route === 'pmonitors'">
+        <div class="cards">
+          <div class="stat-card" v-for="pl in platforms" :key="pl.key">
+            <div class="num ok">{{ (pStats.per_platform && pStats.per_platform[pl.key]) ? pStats.per_platform[pl.key].active : '-' }}</div>
+            <div class="lbl">{{ pl.name }}监控</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>添加平台监控</h2>
+          <form class="inline-form" @submit.prevent="addPlatformMonitor">
+            <select v-model="pmForm.platform">
+              <option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option>
+            </select>
+            <input v-model.trim="pmForm.creator_id" placeholder="博主主页 URL 或 ID（见下方说明）" style="min-width:300px" required>
+            <input v-model.trim="pmForm.label" placeholder="展示名（昵称已脱敏，必填）" style="width:200px" required>
+            <button type="submit" class="btn primary" :disabled="pmAdding">{{ pmAdding ? '添加中…' : '添加监控' }}</button>
+          </form>
+          <div v-if="pmError" class="alert error">{{ pmError }}</div>
+          <p class="muted" style="margin-top:8px">
+            小红书：填带 xsec_token 的完整主页链接；抖音/快手：填主页链接或裸 ID。
+            每个博主每轮最多抓取最新 15 条，重复内容自动去重、数据更新。
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>平台监控列表</h2>
+            <span class="muted">{{ pmonitors.length }} 个监控</span>
+            <div class="spacer"></div>
+            <button v-for="pl in platforms" :key="'run' + pl.key" class="btn ghost" style="margin-right:6px" @click="triggerPlatformRun(pl.key)">立即抓取{{ pl.name }}</button>
+            <button class="btn ghost" @click="loadPlatformMonitors">刷新</button>
+          </div>
+          <div v-if="pMsg" class="alert" :class="pMsgOk ? 'ok' : 'error'">{{ pMsg }}</div>
+          <table>
+            <thead><tr>
+              <th>ID</th><th>平台</th><th>展示名</th><th>creator_id</th><th>创建人</th><th>状态</th>
+              <th>最近轮询</th><th>错误</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="m in pmonitors" :key="m.id">
+                <td>{{ m.id }}</td>
+                <td>{{ platName(m.platform) }}</td>
+                <td>{{ m.label }}</td>
+                <td class="mono muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis" :title="m.creator_id">{{ m.creator_id }}</td>
+                <td class="muted">{{ creatorLabel(m.created_by) }}</td>
+                <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
+                <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
+                <td class="err-cell" :title="m.last_error">{{ m.last_error || '' }}</td>
+                <td class="ops">
+                  <button v-if="!m.active" class="btn small" @click="resumePlatformMonitor(m)">恢复</button>
+                  <button class="btn small danger" @click="removePlatformMonitor(m)">停止</button>
+                </td>
+              </tr>
+              <tr v-if="!pmonitors.length"><td colspan="9" class="empty">暂无平台监控，先在上方添加</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 平台内容 ================= -->
+      <section v-if="route === 'pposts'">
+        <div class="card">
+          <div class="inline-form">
+            <select v-model="pPlat" @change="onPlatformChange">
+              <option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option>
+            </select>
+            <select v-model="pMonId" @change="loadPlatformPosts">
+              <option :value="null" disabled>选择博主</option>
+              <option v-for="m in pmOfPlat(pPlat)" :key="m.id" :value="m.id">{{ m.label }} (#{{ m.id }})</option>
+            </select>
+            <input v-model.number="pLimit" type="number" min="1" max="200" placeholder="条数" style="width:90px">
+            <button class="btn ghost" @click="loadPlatformPosts">刷新</button>
+            <span v-if="pLoading" class="muted">加载中…</span>
+            <span v-else class="muted">共 {{ pposts.length }} 条（每 10s 自动刷新）</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div v-if="pposts.length" class="tweet-list">
+            <div class="tweet" v-for="p in pposts" :key="p.id">
+              <div class="tweet-head">
+                <span class="mono">{{ pmLabel(p.monitor_id) }}</span>
+                <span class="muted">{{ fmtTime(p.created_at) }}</span>
+                <span class="mono muted">#{{ p.content_id }}</span>
+              </div>
+              <div v-if="p.title || p.content" class="tweet-content" :class="{clamped: !p._exp}" @click="p._exp = !p._exp" :title="'点击' + (p._exp ? '收起' : '展开')">
+                <template v-if="p.title && p.title !== p.content"><strong>{{ p.title }}</strong><br></template>{{ p.content }}
+              </div>
+              <div v-if="p.image_urls && p.image_urls.length" class="tweet-media">
+                <a v-for="(img, i) in p.image_urls" :key="'p' + i" :href="img" target="_blank" rel="noopener" title="点击查看原图">
+                  <img :src="img" loading="lazy" alt="图片">
+                </a>
+              </div>
+              <div v-if="p.video_url" class="tweet-media">
+                <a :href="p.video_url" target="_blank" rel="noopener" title="点击播放视频">
+                  <img :src="p.cover_url || (p.image_urls && p.image_urls[0])" loading="lazy" alt="视频"><span class="tplay">视频</span>
+                </a>
+              </div>
+              <div class="tweet-meta">
+                <span v-if="p.stats && p.stats.likes != null">赞 {{ p.stats.likes }}</span>
+                <span v-if="p.stats && p.stats.comments != null">评 {{ p.stats.comments }}</span>
+                <span v-if="p.stats && p.stats.shares != null">转 {{ p.stats.shares }}</span>
+                <span v-if="p.stats && p.stats.views != null">看 {{ p.stats.views }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="pMonId != null" class="empty">还没有内容（点击刷新拉取，或在上方「平台监控」里点「立即抓取」）</div>
+          <div v-else class="empty">先选择一个博主</div>
+        </div>
+      </section>
+
       <!-- ================= 统计看板 ================= -->
       <section v-if="route === 'stats'">
         <div class="cards">

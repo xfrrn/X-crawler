@@ -1,3 +1,6 @@
 [submodule "twscrape"]
 	path = twscrape
 	url = https://github.com/vladkens/twscrape.git
+[submodule "mediacrawler"]
+	path = mediacrawler
+	url = https://github.com/NanmiCoder/MediaCrawler.git

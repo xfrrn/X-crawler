@@ -4,6 +4,8 @@ const { createApp } = Vue;
 const PAGES = [
   { key: "monitors", path: "#/monitors", label: "监控管理" },
   { key: "tweets", path: "#/tweets", label: "推文浏览" },
+  { key: "pmonitors", path: "#/pmonitors", label: "平台监控" },
+  { key: "pposts", path: "#/pposts", label: "平台内容" },
   { key: "stats", path: "#/stats", label: "统计看板" },
   { key: "accounts", path: "#/accounts", label: "采集账号" },
 ];
@@ -56,6 +58,25 @@ createApp({
       tweetMonId: null,
       tweetLimit: 20,
       tweetsLoading: false,
+      // 平台监控
+      platforms: [
+        { key: "xhs", name: "小红书" },
+        { key: "dy", name: "抖音" },
+        { key: "ks", name: "快手" },
+      ],
+      pmonitors: [],
+      pmForm: { platform: "xhs", creator_id: "", label: "" },
+      pmAdding: false,
+      pmError: "",
+      pMsg: "",
+      pMsgOk: false,
+      pStats: {},
+      // 平台内容
+      pposts: [],
+      pPlat: "xhs",
+      pMonId: null,
+      pLimit: 20,
+      pLoading: false,
       // 统计看板 / 采集账号
       stats: {},
       acc: {},
@@ -208,6 +229,114 @@ createApp({
       }
     },
 
+    /* ---- 平台监控 ---- */
+    platName(p) {
+      const f = this.platforms.find((x) => x.key === p);
+      return f ? f.name : p;
+    },
+    pmOfPlat(p) {
+      return this.pmonitors.filter((m) => m.platform === p);
+    },
+    pmLabel(mid) {
+      const m = this.pmonitors.find((x) => x.id === mid);
+      return m ? m.label : "#" + mid;
+    },
+    async loadPlatformMonitors() {
+      try {
+        this.pmonitors = await this.api("/platform/monitors");
+      } catch (e) {
+        this.notify(e.message);
+      }
+    },
+    async loadPlatformStats() {
+      try {
+        this.pStats = await this.api("/platform/stats");
+      } catch (e) {
+        this.notify(e.message);
+      }
+    },
+    async addPlatformMonitor() {
+      const creator_id = this.pmForm.creator_id.trim();
+      const label = this.pmForm.label.trim();
+      if (!creator_id || !label) {
+        this.pmError = "博主链接/ID 和展示名都要填";
+        return;
+      }
+      this.pmAdding = true;
+      this.pmError = "";
+      try {
+        await this.api("/platform/monitors", {
+          method: "POST",
+          body: JSON.stringify({
+            platform: this.pmForm.platform,
+            creator_id,
+            label,
+          }),
+        });
+        this.pmForm.creator_id = "";
+        this.pmForm.label = "";
+        await this.loadPlatformMonitors();
+        await this.loadPlatformStats();
+      } catch (e) {
+        this.pmError = e.message;
+      } finally {
+        this.pmAdding = false;
+      }
+    },
+    async resumePlatformMonitor(m) {
+      try {
+        await this.api(`/platform/monitors/${m.id}/resume`, { method: "POST" });
+        await this.loadPlatformMonitors();
+      } catch (e) {
+        this.notify(e.message);
+      }
+    },
+    async removePlatformMonitor(m) {
+      if (
+        !confirm(
+          `确认停止监控 ${this.platName(m.platform)} ${m.label}（#${m.id}）？历史内容保留。`
+        )
+      )
+        return;
+      try {
+        await this.api(`/platform/monitors/${m.id}`, { method: "DELETE" });
+        await this.loadPlatformMonitors();
+      } catch (e) {
+        this.notify(e.message);
+      }
+    },
+    async triggerPlatformRun(p) {
+      this.pMsg = "";
+      try {
+        const r = await this.api(`/platform/run/${p}`, { method: "POST" });
+        this.pMsg = `${this.platName(p)} 抓取已启动（${r.monitors.length} 个监控），稍后在「平台内容」刷新查看`;
+        this.pMsgOk = true;
+        await this.loadPlatformMonitors();
+      } catch (e) {
+        this.pMsg = e.message;
+        this.pMsgOk = false;
+      }
+    },
+    async loadPlatformPosts() {
+      if (this.pMonId == null) return;
+      this.pLoading = true;
+      try {
+        const list = await this.api(
+          `/platform/posts?monitor_id=${this.pMonId}&limit=${this.pLimit || 20}`
+        );
+        this.pposts = list.map((p) => ({ ...p, _exp: false }));
+      } catch (e) {
+        this.notify(e.message);
+      } finally {
+        this.pLoading = false;
+      }
+    },
+    onPlatformChange() {
+      const list = this.pmOfPlat(this.pPlat);
+      this.pMonId = list.length ? list[0].id : null;
+      this.loadPlatformPosts();
+    },
+
     /* ---- 统计 / 账号 ---- */
     async loadStats() {
       try {
@@ -308,6 +437,8 @@ createApp({
       this.loadMonitors();
       this.loadStats();
       this.loadAccounts();
+      this.loadPlatformMonitors();
+      this.loadPlatformStats();
     },
     refreshForRoute() {
       const r = this.route;
@@ -317,6 +448,15 @@ createApp({
           this.tweetMonId = this.monitors[0].id;
         }
         this.loadTweets();
+      } else if (r === "pmonitors") {
+        this.loadPlatformMonitors();
+        this.loadPlatformStats();
+      } else if (r === "pposts") {
+        if (this.pMonId == null) {
+          const list = this.pmOfPlat(this.pPlat);
+          if (list.length) this.pMonId = list[0].id;
+        }
+        this.loadPlatformPosts();
       } else if (r === "stats") this.loadStats();
       else if (r === "accounts") this.loadAccounts();
     },
@@ -330,12 +470,13 @@ createApp({
       this.route = currentRoute();
       this.refreshForRoute();
     });
-    // 每 5s 刷新当前页数据；推文/账号两个重页每 2 tick（10s）刷新一次
+    // 每 5s 刷新当前页数据；推文/账号/平台内容三个重页每 2 tick（10s）刷新一次
     setInterval(() => {
       if (!this.authed) return;
       this.tick++;
       const r = this.route;
-      if ((r === "tweets" || r === "accounts") && this.tick % 2 !== 0) return;
+      if ((r === "tweets" || r === "accounts" || r === "pposts") && this.tick % 2 !== 0)
+        return;
       this.refreshForRoute();
     }, 5000);
   },

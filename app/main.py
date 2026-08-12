@@ -1,6 +1,11 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+# 让 app.*（init/scheduler/engine）的 INFO 日志显示在控制台；
+# uvicorn 自带 logger 是 propagate=False 不受影响，不会重复输出
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -9,7 +14,10 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import get_settings
 from .db import Database
 from .manager import MonitorManager
-from .routers import accounts, admin, monitors, stream, system, tweets
+from .platform.engine import MediaCrawlerEngine
+from .platform.init import ensure_mediacrawler_ready
+from .platform.scheduler import PlatformScheduler
+from .routers import accounts, admin, monitors, platform, stream, system, tweets
 from .scraper import create_scraper
 from .state import state
 from .stream import SSEManager
@@ -25,17 +33,25 @@ async def lifespan(app: FastAPI):
     )
     stream_bus = SSEManager(replay_size=settings.sse_replay_size)
     manager = MonitorManager(db, scraper, stream_bus, settings)
+    platform_engine = MediaCrawlerEngine(settings, db)
+    platform_scheduler = PlatformScheduler(db, platform_engine, stream_bus, settings)
 
     state.db = db
     state.scraper = scraper
     state.stream = stream_bus
     state.manager = manager
+    state.platform_engine = platform_engine
+    state.platform_scheduler = platform_scheduler
     state.started_at = datetime.now(timezone.utc)
 
     await manager.start()
+    # 首次启动初始化 MediaCrawler（uv sync + 应用补丁 + 装浏览器），之后幂等快路径
+    await ensure_mediacrawler_ready(settings)
+    await platform_scheduler.start()
     try:
         yield
     finally:
+        await platform_scheduler.stop()
         await manager.stop()
         await db.close()
 
@@ -56,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(monitors.router)
     app.include_router(tweets.router)
     app.include_router(stream.router)
+    app.include_router(platform.router)
     app.include_router(accounts.router)
     app.include_router(system.router)
 

@@ -44,6 +44,41 @@ CREATE TABLE IF NOT EXISTS tweets (
 CREATE INDEX IF NOT EXISTS idx_tweets_monitor ON tweets(monitor_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_tweets_created ON tweets(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tweets_username ON tweets(username, id DESC);
+
+CREATE TABLE IF NOT EXISTS platform_monitors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform TEXT NOT NULL,
+    creator_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    last_poll_at TEXT,
+    last_error TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(platform, creator_id)
+);
+
+CREATE TABLE IF NOT EXISTS platform_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform TEXT NOT NULL,
+    monitor_id INTEGER NOT NULL REFERENCES platform_monitors(id),
+    content_id TEXT NOT NULL,
+    creator_hash TEXT,
+    title TEXT,
+    content TEXT,
+    created_at TEXT,
+    image_urls TEXT,
+    video_url TEXT,
+    cover_url TEXT,
+    stats TEXT,
+    raw_json TEXT,
+    inserted_at TEXT NOT NULL,
+    UNIQUE(platform, content_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pp_monitor_created ON platform_posts(monitor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pp_platform_created ON platform_posts(platform, created_at DESC);
 """
 
 
@@ -312,6 +347,181 @@ class Database:
     async def count_tweets_since(self, iso: str) -> int:
         cur = await self.conn.execute(
             "SELECT COUNT(*) AS c FROM tweets WHERE inserted_at >= ?", (iso,)
+        )
+        row = await cur.fetchone()
+        return row["c"] if row else 0
+
+    # ---- platform monitors（抖音/快手/小红书）----
+
+    async def create_platform_monitor(
+        self,
+        platform: str,
+        creator_id: str,
+        label: str,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        """UNIQUE(platform, creator_id) 冲突会抛 sqlite3.IntegrityError，由路由映射 409。"""
+        ts = now_iso()
+        cur = await self.conn.execute(
+            """
+            INSERT INTO platform_monitors (platform, creator_id, label, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (platform, creator_id, label, created_by, ts, ts),
+        )
+        await self.conn.commit()
+        return await self.get_platform_monitor(cur.lastrowid)
+
+    async def get_platform_monitor(self, monitor_id: int) -> dict[str, Any] | None:
+        cur = await self.conn.execute("SELECT * FROM platform_monitors WHERE id = ?", (monitor_id,))
+        row = await cur.fetchone()
+        return row_to_dict(row) if row else None
+
+    async def list_platform_monitors(self, platform: str | None = None) -> list[dict[str, Any]]:
+        if platform is not None:
+            cur = await self.conn.execute(
+                "SELECT * FROM platform_monitors WHERE platform = ? ORDER BY id", (platform,)
+            )
+        else:
+            cur = await self.conn.execute("SELECT * FROM platform_monitors ORDER BY id")
+        return [row_to_dict(r) for r in await cur.fetchall()]
+
+    async def update_platform_monitor(self, monitor_id: int, **fields: Any) -> dict[str, Any] | None:
+        if not fields:
+            return await self.get_platform_monitor(monitor_id)
+        keys = ", ".join(f"{k} = ?" for k in fields)
+        await self.conn.execute(
+            f"UPDATE platform_monitors SET {keys}, updated_at = ? WHERE id = ?",
+            (*fields.values(), now_iso(), monitor_id),
+        )
+        await self.conn.commit()
+        return await self.get_platform_monitor(monitor_id)
+
+    async def mark_platform_poll(self, monitor_id: int, error: str | None) -> None:
+        await self.conn.execute(
+            """
+            UPDATE platform_monitors
+            SET last_poll_at = ?, last_error = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now_iso(), error, now_iso(), monitor_id),
+        )
+        await self.conn.commit()
+
+    # ---- platform posts ----
+
+    async def upsert_platform_posts(self, posts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """已存在的 (platform, content_id) 刷新数据，新的插入；返回本次真正新插入的行（供 SSE）。"""
+        if not posts:
+            return []
+        platform = posts[0]["platform"]
+        cur = await self.conn.execute(
+            "SELECT content_id FROM platform_posts WHERE platform = ?", (platform,)
+        )
+        existing = {row[0] for row in await cur.fetchall()}
+
+        new_posts: list[dict[str, Any]] = []
+        for p in posts:
+            if p["content_id"] in existing:
+                await self.conn.execute(
+                    """
+                    UPDATE platform_posts
+                    SET monitor_id = ?, title = ?, content = ?, created_at = ?,
+                        image_urls = ?, video_url = ?, cover_url = ?, stats = ?, raw_json = ?
+                    WHERE platform = ? AND content_id = ?
+                    """,
+                    (
+                        p.get("monitor_id"),
+                        p.get("title"),
+                        p.get("content"),
+                        p.get("created_at"),
+                        p.get("image_urls"),
+                        p.get("video_url"),
+                        p.get("cover_url"),
+                        p.get("stats"),
+                        p.get("raw_json"),
+                        platform,
+                        p["content_id"],
+                    ),
+                )
+            else:
+                ts = now_iso()
+                await self.conn.execute(
+                    """
+                    INSERT INTO platform_posts
+                        (platform, monitor_id, content_id, creator_hash, title, content,
+                         created_at, image_urls, video_url, cover_url, stats, raw_json, inserted_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        platform,
+                        p.get("monitor_id"),
+                        p["content_id"],
+                        p.get("creator_hash"),
+                        p.get("title"),
+                        p.get("content"),
+                        p.get("created_at"),
+                        p.get("image_urls"),
+                        p.get("video_url"),
+                        p.get("cover_url"),
+                        p.get("stats"),
+                        p.get("raw_json"),
+                        ts,
+                    ),
+                )
+                new_posts.append({**p, "inserted_at": ts})
+        await self.conn.commit()
+        return new_posts
+
+    async def query_platform_posts(
+        self,
+        platform: str | None = None,
+        monitor_id: int | None = None,
+        limit: int = 50,
+        before_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM platform_posts WHERE 1=1"
+        params: list[Any] = []
+        if platform is not None:
+            sql += " AND platform = ?"
+            params.append(platform)
+        if monitor_id is not None:
+            sql += " AND monitor_id = ?"
+            params.append(monitor_id)
+        if before_id is not None:
+            sql += " AND id < ?"
+            params.append(before_id)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        cur = await self.conn.execute(sql, params)
+        rows = [row_to_dict(r) for r in await cur.fetchall()]
+        for row in rows:
+            for col in ("image_urls", "stats"):
+                if row.get(col):
+                    try:
+                        row[col] = json.loads(row[col])
+                    except Exception:
+                        row[col] = None
+        return rows
+
+    async def count_platform_posts(
+        self, platform: str | None = None, monitor_id: int | None = None
+    ) -> int:
+        sql = "SELECT COUNT(*) AS c FROM platform_posts WHERE 1=1"
+        params: list[Any] = []
+        if platform is not None:
+            sql += " AND platform = ?"
+            params.append(platform)
+        if monitor_id is not None:
+            sql += " AND monitor_id = ?"
+            params.append(monitor_id)
+        cur = await self.conn.execute(sql, params)
+        row = await cur.fetchone()
+        return row["c"] if row else 0
+
+    async def count_platform_posts_since(self, iso: str) -> int:
+        cur = await self.conn.execute(
+            "SELECT COUNT(*) AS c FROM platform_posts WHERE inserted_at >= ?", (iso,)
         )
         row = await cur.fetchone()
         return row["c"] if row else 0

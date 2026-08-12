@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+Platform = Literal["xhs", "dy", "ks"]
 
 
 class MonitorCreate(BaseModel):
@@ -54,3 +58,42 @@ class TweetOut(BaseModel):
     quote_count: int | None
     view_count: int | None
     media: dict | None = None
+
+
+class PlatformMonitorCreate(BaseModel):
+    """抖音/快手/小红书监控项。label 必填：MediaCrawler 教学版会把博主昵称脱敏，面板用 label 展示。"""
+
+    platform: Platform
+    creator_id: str = Field(min_length=1, max_length=512)
+    label: str = Field(min_length=1, max_length=64)
+
+
+class PlatformMonitorOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    platform: str
+    creator_id: str
+    label: str
+    active: bool
+    last_poll_at: str | None
+    last_error: str | None
+    created_by: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class PlatformPostOut(BaseModel):
+    id: int
+    platform: str
+    monitor_id: int
+    content_id: str
+    creator_hash: str | None
+    title: str | None
+    content: str | None
+    created_at: str | None
+    image_urls: list[str] | None
+    video_url: str | None
+    cover_url: str | None
+    stats: dict | None
+    inserted_at: str

@@ -14,6 +14,8 @@ class AppState:
     scraper: Scraper | None = None
     stream: SSEManager | None = None
     manager: MonitorManager | None = None
+    platform_engine: "MediaCrawlerEngine | None" = None
+    platform_scheduler: "PlatformScheduler | None" = None
     started_at: datetime | None = None
     _bag: dict[str, Any] = field(default_factory=dict)
 
