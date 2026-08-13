@@ -164,6 +164,8 @@ class PlatformScheduler:
     # ---- 手动触发 / 状态 ----
 
     async def trigger_platform(self, platform: str) -> dict[str, Any]:
+        if not self._settings.mc_enabled or not os.path.isdir(self._settings.mc_repo_path):
+            raise ValueError("MediaCrawler 未启用或目录不存在")
         active = [m for m in await self._db.list_platform_monitors(platform) if m["active"]]
         if not active:
             raise ValueError(f"平台 {platform} 没有运行中的监控")

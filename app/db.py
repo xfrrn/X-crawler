@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS tweets (
     view_count INTEGER,
     media TEXT,
     raw_json TEXT NOT NULL,
-    inserted_at TEXT NOT NULL
+    inserted_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tweets_monitor ON tweets(monitor_id, id DESC);
@@ -74,11 +75,35 @@ CREATE TABLE IF NOT EXISTS platform_posts (
     stats TEXT,
     raw_json TEXT,
     inserted_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     UNIQUE(platform, content_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pp_monitor_created ON platform_posts(monitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pp_platform_created ON platform_posts(platform, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS autoup_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform TEXT NOT NULL,
+    canonical_key TEXT NOT NULL,
+    monitor_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(platform, canonical_key),
+    UNIQUE(platform, monitor_id)
+);
+
+CREATE TABLE IF NOT EXISTS autoup_subscriptions (
+    competitor_id TEXT PRIMARY KEY,
+    target_id INTEGER NOT NULL REFERENCES autoup_targets(id),
+    display_name TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_autoup_subscriptions_target
+ON autoup_subscriptions(target_id, enabled);
 """
 
 
@@ -183,6 +208,12 @@ class Database:
         if "media" not in tcols:
             await self._conn.execute("ALTER TABLE tweets ADD COLUMN media TEXT")
             await self._conn.commit()
+        if "updated_at" not in tcols:
+            await self._conn.execute("ALTER TABLE tweets ADD COLUMN updated_at TEXT")
+            await self._conn.execute(
+                "UPDATE tweets SET updated_at = inserted_at WHERE updated_at IS NULL"
+            )
+            await self._conn.commit()
         cur = await self._conn.execute("SELECT id, raw_json FROM tweets WHERE media IS NULL")
         backfill = await cur.fetchall()
         for tid, raw in backfill:
@@ -207,6 +238,38 @@ class Database:
                 )
         if old_content:
             await self._conn.commit()
+        pcols = {
+            row[1]
+            for row in await (
+                await self._conn.execute("PRAGMA table_info(platform_posts)")
+            ).fetchall()
+        }
+        if "updated_at" not in pcols:
+            await self._conn.execute("ALTER TABLE platform_posts ADD COLUMN updated_at TEXT")
+            await self._conn.execute(
+                "UPDATE platform_posts SET updated_at = inserted_at WHERE updated_at IS NULL"
+            )
+            await self._conn.commit()
+        subscription_columns = {
+            row[1]
+            for row in await (
+                await self._conn.execute("PRAGMA table_info(autoup_subscriptions)")
+            ).fetchall()
+        }
+        if "display_name" not in subscription_columns:
+            await self._conn.execute(
+                "ALTER TABLE autoup_subscriptions ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
+            )
+            await self._conn.commit()
+        # Older builds stored the full bearer key in created_by. It cannot be
+        # reconstructed safely, so redact it once and only store fingerprints going forward.
+        await self._conn.execute(
+            "UPDATE monitors SET created_by = 'apikey:[redacted]' WHERE created_by LIKE 'apikey:%'"
+        )
+        await self._conn.execute(
+            "UPDATE platform_monitors SET created_by = 'apikey:[redacted]' WHERE created_by LIKE 'apikey:%'"
+        )
+        await self._conn.commit()
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -271,14 +334,44 @@ class Database:
     # ---- tweets ----
 
     async def insert_tweet(self, tweet: dict[str, Any]) -> bool:
-        """Returns True if inserted, False if already existed (dedup by id)."""
+        """Upsert a tweet and return True only when it was newly inserted."""
+        existed = await self.tweet_exists(tweet["id"])
+        ts = now_iso()
+        media = json.dumps(tweet.get("media"), ensure_ascii=False) if tweet.get("media") else None
         cur = await self.conn.execute(
             """
-            INSERT OR IGNORE INTO tweets
+            INSERT INTO tweets
                 (id, monitor_id, user_id, username, created_at, content, lang,
                  reply_count, retweet_count, like_count, quote_count, view_count,
-                 media, raw_json, inserted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 media, raw_json, inserted_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                monitor_id = excluded.monitor_id,
+                user_id = excluded.user_id,
+                username = excluded.username,
+                created_at = excluded.created_at,
+                content = excluded.content,
+                lang = excluded.lang,
+                reply_count = excluded.reply_count,
+                retweet_count = excluded.retweet_count,
+                like_count = excluded.like_count,
+                quote_count = excluded.quote_count,
+                view_count = excluded.view_count,
+                media = excluded.media,
+                raw_json = excluded.raw_json,
+                updated_at = excluded.updated_at
+            WHERE tweets.monitor_id IS NOT excluded.monitor_id
+               OR tweets.user_id IS NOT excluded.user_id
+               OR tweets.username IS NOT excluded.username
+               OR tweets.created_at IS NOT excluded.created_at
+               OR tweets.content IS NOT excluded.content
+               OR tweets.lang IS NOT excluded.lang
+               OR tweets.reply_count IS NOT excluded.reply_count
+               OR tweets.retweet_count IS NOT excluded.retweet_count
+               OR tweets.like_count IS NOT excluded.like_count
+               OR tweets.quote_count IS NOT excluded.quote_count
+               OR tweets.view_count IS NOT excluded.view_count
+               OR tweets.media IS NOT excluded.media
             """,
             (
                 tweet["id"],
@@ -293,13 +386,14 @@ class Database:
                 tweet.get("like_count"),
                 tweet.get("quote_count"),
                 tweet.get("view_count"),
-                json.dumps(tweet.get("media"), ensure_ascii=False) if tweet.get("media") else None,
+                media,
                 tweet["raw_json"],
-                now_iso(),
+                ts,
+                ts,
             ),
         )
         await self.conn.commit()
-        return cur.rowcount > 0
+        return not existed
 
     async def query_tweets(
         self,
@@ -416,43 +510,47 @@ class Database:
             return []
         platform = posts[0]["platform"]
         cur = await self.conn.execute(
-            "SELECT content_id FROM platform_posts WHERE platform = ?", (platform,)
+            "SELECT * FROM platform_posts WHERE platform = ?", (platform,)
         )
-        existing = {row[0] for row in await cur.fetchall()}
+        existing = {row["content_id"]: row_to_dict(row) for row in await cur.fetchall()}
 
         new_posts: list[dict[str, Any]] = []
         for p in posts:
-            if p["content_id"] in existing:
-                await self.conn.execute(
+            current = existing.get(p["content_id"])
+            values = (
+                p.get("monitor_id"), p.get("creator_hash"), p.get("title"),
+                p.get("content"), p.get("created_at"), p.get("image_urls"),
+                p.get("video_url"), p.get("cover_url"), p.get("stats"),
+                p.get("raw_json"),
+            )
+            tracked_columns = (
+                "monitor_id", "creator_hash", "title", "content", "created_at",
+                "image_urls", "video_url", "cover_url", "stats",
+            )
+            if current is not None:
+                if any(
+                    current[name] != value
+                    for name, value in zip(tracked_columns, values[:-1])
+                ):
+                    await self.conn.execute(
                     """
                     UPDATE platform_posts
                     SET monitor_id = ?, creator_hash = ?, title = ?, content = ?, created_at = ?,
-                        image_urls = ?, video_url = ?, cover_url = ?, stats = ?, raw_json = ?
+                        image_urls = ?, video_url = ?, cover_url = ?, stats = ?, raw_json = ?,
+                        updated_at = ?
                     WHERE platform = ? AND content_id = ?
                     """,
-                    (
-                        p.get("monitor_id"),
-                        p.get("creator_hash"),
-                        p.get("title"),
-                        p.get("content"),
-                        p.get("created_at"),
-                        p.get("image_urls"),
-                        p.get("video_url"),
-                        p.get("cover_url"),
-                        p.get("stats"),
-                        p.get("raw_json"),
-                        platform,
-                        p["content_id"],
-                    ),
-                )
+                        (*values, now_iso(), platform, p["content_id"]),
+                    )
             else:
                 ts = now_iso()
                 await self.conn.execute(
                     """
                     INSERT INTO platform_posts
                         (platform, monitor_id, content_id, creator_hash, title, content,
-                         created_at, image_urls, video_url, cover_url, stats, raw_json, inserted_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         created_at, image_urls, video_url, cover_url, stats, raw_json,
+                         inserted_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         platform,
@@ -468,9 +566,10 @@ class Database:
                         p.get("stats"),
                         p.get("raw_json"),
                         ts,
+                        ts,
                     ),
                 )
-                new_posts.append({**p, "inserted_at": ts})
+                new_posts.append({**p, "inserted_at": ts, "updated_at": ts})
         await self.conn.commit()
         return new_posts
 
@@ -526,3 +625,121 @@ class Database:
         )
         row = await cur.fetchone()
         return row["c"] if row else 0
+
+    # ---- AutoUp integration ----
+
+    async def get_autoup_target(self, target_id: int) -> dict[str, Any] | None:
+        cur = await self.conn.execute("SELECT * FROM autoup_targets WHERE id = ?", (target_id,))
+        row = await cur.fetchone()
+        return row_to_dict(row) if row else None
+
+    async def find_autoup_target(self, platform: str, canonical_key: str) -> dict[str, Any] | None:
+        cur = await self.conn.execute(
+            "SELECT * FROM autoup_targets WHERE platform = ? AND canonical_key = ?",
+            (platform, canonical_key),
+        )
+        row = await cur.fetchone()
+        return row_to_dict(row) if row else None
+
+    async def create_autoup_target(self, platform: str, canonical_key: str, monitor_id: int) -> dict[str, Any]:
+        ts = now_iso()
+        cur = await self.conn.execute(
+            """
+            INSERT INTO autoup_targets (platform, canonical_key, monitor_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (platform, canonical_key, monitor_id, ts, ts),
+        )
+        await self.conn.commit()
+        target = await self.get_autoup_target(cur.lastrowid)
+        assert target is not None
+        return target
+
+    async def upsert_autoup_subscription(
+        self, competitor_id: str, target_id: int, display_name: str, enabled: bool
+    ) -> None:
+        ts = now_iso()
+        await self.conn.execute(
+            """
+            INSERT INTO autoup_subscriptions (
+                competitor_id, target_id, display_name, enabled, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(competitor_id) DO UPDATE SET
+                target_id = excluded.target_id,
+                display_name = excluded.display_name,
+                enabled = excluded.enabled,
+                updated_at = excluded.updated_at
+            """,
+            (competitor_id, target_id, display_name, int(enabled), ts, ts),
+        )
+        await self.conn.commit()
+
+    async def get_autoup_subscription(self, competitor_id: str) -> dict[str, Any] | None:
+        cur = await self.conn.execute(
+            "SELECT * FROM autoup_subscriptions WHERE competitor_id = ?", (competitor_id,)
+        )
+        row = await cur.fetchone()
+        return row_to_dict(row) if row else None
+
+    async def update_autoup_subscription(
+        self,
+        competitor_id: str,
+        *,
+        display_name: str | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any] | None:
+        fields: dict[str, Any] = {"updated_at": now_iso()}
+        if display_name is not None:
+            fields["display_name"] = display_name
+        if enabled is not None:
+            fields["enabled"] = int(enabled)
+        assignments = ", ".join(f"{column} = ?" for column in fields)
+        await self.conn.execute(
+            f"UPDATE autoup_subscriptions SET {assignments} WHERE competitor_id = ?",
+            (*fields.values(), competitor_id),
+        )
+        await self.conn.commit()
+        return await self.get_autoup_subscription(competitor_id)
+
+    async def delete_autoup_subscription(self, competitor_id: str) -> int | None:
+        subscription = await self.get_autoup_subscription(competitor_id)
+        if subscription is None:
+            return None
+        await self.conn.execute(
+            "DELETE FROM autoup_subscriptions WHERE competitor_id = ?", (competitor_id,)
+        )
+        await self.conn.commit()
+        return int(subscription["target_id"])
+
+    async def count_active_autoup_subscriptions(self, target_id: int) -> int:
+        cur = await self.conn.execute(
+            "SELECT COUNT(*) AS c FROM autoup_subscriptions WHERE target_id = ? AND enabled = 1",
+            (target_id,),
+        )
+        row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+
+    async def query_autoup_changes(
+        self, platform: str, monitor_id: int, after_time: str, after_id: int, limit: int
+    ) -> list[dict[str, Any]]:
+        table = "tweets" if platform == "x" else "platform_posts"
+        cur = await self.conn.execute(
+            f"""
+            SELECT * FROM {table}
+            WHERE monitor_id = ?
+              AND (updated_at > ? OR (updated_at = ? AND id > ?))
+            ORDER BY updated_at, id
+            LIMIT ?
+            """,
+            (monitor_id, after_time, after_time, after_id, limit),
+        )
+        rows = [row_to_dict(row) for row in await cur.fetchall()]
+        for row in rows:
+            for column in (("media",) if platform == "x" else ("image_urls", "stats")):
+                if row.get(column):
+                    try:
+                        row[column] = json.loads(row[column])
+                    except Exception:
+                        row[column] = None
+            row.pop("raw_json", None)
+        return rows

@@ -17,7 +17,7 @@ from .manager import MonitorManager
 from .platform.engine import MediaCrawlerEngine
 from .platform.init import ensure_mediacrawler_ready
 from .platform.scheduler import PlatformScheduler
-from .routers import accounts, admin, monitors, platform, stream, system, tweets
+from .routers import accounts, admin, autoup, monitors, platform, stream, system, tweets
 from .scraper import create_scraper
 from .state import state
 from .stream import SSEManager
@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(tweets.router)
     app.include_router(stream.router)
     app.include_router(platform.router)
+    app.include_router(autoup.router)
     app.include_router(accounts.router)
     app.include_router(system.router)
 

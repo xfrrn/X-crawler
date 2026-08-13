@@ -1,6 +1,6 @@
 # X-Crawler
 
-推特账号实时监控服务：通过 API 注册要监控的推特账号，高频轮询抓取新推文，对外提供 REST 拉取 + SSE 实时推送。
+X、抖音、快手和小红书账号采集服务：管理真实采集目标与源历史，同时为 AutoUp Cloud 提供共享目标订阅和增量 change feed。现有管理面板、REST 与 SSE 接口保持兼容。
 
 ## 技术栈
 
@@ -172,9 +172,24 @@ CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
 
 所有接口都需要请求头 `Authorization: Bearer <API_KEYS 中的任意一个>`；后台面板登录后可用 session cookie 免带 Key。
 
+### AutoUp 集成接口
+
+集成接口不改变现有管理面板 API。AutoUp 平台标识为 `x / douyin / kuaishou / xiaohongshu`，服务内部映射为 `x / dy / ks / xhs`：
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/monitors` | 添加监控，body `{username, interval_seconds?}`；自动记录创建人（后台=`admin:xx`，API=`apikey:xx`） |
+| PUT | `/integrations/autoup/subscriptions/{competitorId}` | 以 `{platform,target,displayName,enabled?}` 幂等创建订阅并返回不透明 `sourceTargetId` |
+| PATCH | `/integrations/autoup/subscriptions/{competitorId}` | 同步当前 workspace 订阅的展示名或启停状态 |
+| DELETE | `/integrations/autoup/subscriptions/{competitorId}` | 幂等删除订阅；最后一个有效订阅删除后才停底层目标，历史保留 |
+| GET | `/integrations/autoup/targets/{sourceTargetId}/changes?cursor=&limit=200` | 空游标分页返回已有历史，之后只返回新增或映射字段变化的数据 |
+
+X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳定创作者 ID。同目标只有一份采集历史，不同 AutoUp workspace 通过各自 competitor UUID 订阅。每个新目标抓最近 15 条；中文平台创建后异步唤醒对应调度器，调用方不等待浏览器采集。
+
+小红书含 `xsec_token` 的完整定位链接只保存在本服务的 monitor 表，change feed 和响应不会返回该 Token。API Key 创建人只保存 `apikey_sha256:<12位指纹>`；启动时会把旧版 `apikey:<明文>` 标记原位改为 `[redacted]`。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/monitors` | 添加监控，body `{username, interval_seconds?}`；自动记录创建人（后台=`admin:xx`，API=`apikey_sha256:指纹`） |
 | GET | `/monitors` | 监控列表（含状态） |
 | DELETE | `/monitors/{id}` | 停止并删除监控 |
 | POST | `/monitors/{id}/resume` | 恢复被自动暂停的监控 |
@@ -242,4 +257,18 @@ CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
 
 ## 数据去重
 
-`tweets` 表以 tweet id 为主键，`INSERT OR IGNORE` 保证幂等；SSE 实时流为尽力投递（消费者落后会丢最旧事件），历史数据靠 REST 查询兜底。
+`tweets` 表以 tweet id 为主键，重复抓取会幂等更新内容、媒体和指标；`platform_posts` 以 `(platform, content_id)` 去重。只有映射数据真正变化时 `updated_at` 才推进，因此 AutoUp change feed 不会因原始传输噪声重复产生变化；SSE 仍只为新记录发送事件，实时流为尽力投递。
+
+## 测试
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+测试使用标准库 `unittest`，覆盖目标规范化、游标、共享订阅、数据级更新时间和 API Key 指纹，不引入额外测试框架。
+
+## 已知限制
+
+- 目标只保留服务已采集到的历史；每次实际平台抓取仍限制最近 15 条，不做平台全量回溯。
+- 中文平台依赖本地 MediaCrawler 与浏览器登录态；禁用或目录缺失时可继续读取既有历史，但异步唤醒不会启动采集。
+- change feed 是 Cloud 轮询接口，不提供 AutoUp 专用 SSE/WebSocket。

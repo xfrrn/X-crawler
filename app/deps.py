@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi import Depends, HTTPException, Request, status
 
 from .config import Settings, get_settings
@@ -14,7 +16,7 @@ def require_api_key(
     """鉴权双通道：外部调用方用 `Authorization: Bearer <API_KEY>`，后台面板走登录 session。
 
     两者任一有效即通过，并返回调用方身份标记（用于记录"谁创建的监控"）：
-    后台面板 → `admin:<用户名>`，外部 API Key → `apikey:<key>`。都不满足返回 401。
+    后台面板 → `admin:<用户名>`，外部 API Key → 不可逆指纹。都不满足返回 401。
     """
     # 后台面板：登录成功后浏览器自动带 session cookie
     if _has_admin_session(request):
@@ -26,7 +28,10 @@ def require_api_key(
     key = auth[len("Bearer "):].strip()
     if key not in settings.api_key_list:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的 API Key")
-    return f"apikey:{key}"
+    fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    # 与旧版 ``apikey:<明文>`` 使用不同前缀，避免启动时的明文清理迁移
+    # 误伤已脱敏的调用方标记。
+    return f"apikey_sha256:{fingerprint}"
 
 
 def require_admin(request: Request) -> None:

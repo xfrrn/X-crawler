@@ -1,8 +1,9 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 Platform = Literal["xhs", "dy", "ks"]
+AutoUpPlatform = Literal["x", "douyin", "kuaishou", "xiaohongshu"]
 
 
 class MonitorCreate(BaseModel):
@@ -97,3 +98,38 @@ class PlatformPostOut(BaseModel):
     cover_url: str | None
     stats: dict | None
     inserted_at: str
+
+
+class AutoUpSubscriptionPut(BaseModel):
+    platform: AutoUpPlatform
+    target: str = Field(min_length=1, max_length=4096)
+    display_name: str = Field(alias="displayName", min_length=1, max_length=500)
+    enabled: bool = True
+
+
+class AutoUpSubscriptionPatch(BaseModel):
+    display_name: str | None = Field(default=None, alias="displayName", min_length=1, max_length=500)
+    enabled: bool | None = None
+
+
+class AutoUpTargetOut(BaseModel):
+    source_target_id: str = Field(alias="sourceTargetId")
+    platform: AutoUpPlatform
+    account_external_id: str = Field(alias="accountExternalId")
+    display_name: str = Field(alias="displayName")
+    active: bool
+    last_collected_at: str | None = Field(alias="lastCollectedAt")
+    last_error: str | None = Field(alias="lastError")
+
+
+class AutoUpChangeOut(BaseModel):
+    source_record_id: str = Field(alias="sourceRecordId")
+    changed_at: str = Field(alias="changedAt")
+    payload: dict[str, Any]
+
+
+class AutoUpChangesOut(BaseModel):
+    target: AutoUpTargetOut
+    items: list[AutoUpChangeOut]
+    next_cursor: str | None = Field(alias="nextCursor")
+    has_more: bool = Field(alias="hasMore")

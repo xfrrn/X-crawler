@@ -9,7 +9,7 @@ from .db import Database
 from .scraper import Scraper
 from .stream import SSEManager
 
-POLL_LIMIT = 20
+POLL_LIMIT = 15
 
 
 @dataclass
@@ -117,6 +117,19 @@ class MonitorManager:
             self._tasks[monitor_id] = asyncio.create_task(self._poll_loop(monitor_id))
         return await self._db.get_monitor(monitor_id)
 
+    async def set_monitor_active(self, monitor_id: int, active: bool) -> dict[str, Any] | None:
+        if active:
+            return await self.resume_monitor(monitor_id)
+        monitor = await self._db.get_monitor(monitor_id)
+        if monitor is None:
+            return None
+        await self._db.update_monitor(monitor_id, active=0)
+        task = self._tasks.pop(monitor_id, None)
+        if task is not None:
+            task.cancel()
+        self._runtime.pop(monitor_id, None)
+        return await self._db.get_monitor(monitor_id)
+
     # ---- 轮询循环 ----
 
     async def _poll_loop(self, monitor_id: int) -> None:
@@ -136,8 +149,6 @@ class MonitorManager:
                     tweets = await self._scraper.recent_tweets(monitor["user_id"], limit=POLL_LIMIT)
                     last_seen = monitor["last_seen_tweet_id"]
                     for t in tweets:
-                        if t["id"] <= (last_seen or 0):
-                            continue
                         t["monitor_id"] = monitor_id
                         if await self._db.insert_tweet(t):
                             rt.total_new += 1
