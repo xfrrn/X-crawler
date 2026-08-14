@@ -14,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import get_settings
 from .db import Database
 from .manager import MonitorManager
+from .ngrok_tunnel import NgrokTunnel
 from .platform.engine import MediaCrawlerEngine
 from .platform.init import ensure_mediacrawler_ready
 from .platform.scheduler import PlatformScheduler
@@ -35,6 +36,9 @@ async def lifespan(app: FastAPI):
     manager = MonitorManager(db, scraper, stream_bus, settings)
     platform_engine = MediaCrawlerEngine(settings, db)
     platform_scheduler = PlatformScheduler(db, platform_engine, stream_bus, settings)
+    ngrok_tunnel = NgrokTunnel(
+        settings.ngrok_auth_token, settings.app_port, settings.ngrok_domain
+    )
 
     state.db = db
     state.scraper = scraper
@@ -42,15 +46,19 @@ async def lifespan(app: FastAPI):
     state.manager = manager
     state.platform_engine = platform_engine
     state.platform_scheduler = platform_scheduler
+    state.ngrok_tunnel = ngrok_tunnel
     state.started_at = datetime.now(timezone.utc)
 
     await manager.start()
     # 首次启动初始化 MediaCrawler（uv sync + 应用补丁 + 装浏览器），之后幂等快路径
     await ensure_mediacrawler_ready(settings)
     await platform_scheduler.start()
+    # 可选 ngrok 公网隧道：凭据留空跳过，失败不阻断服务
+    await ngrok_tunnel.start()
     try:
         yield
     finally:
+        await ngrok_tunnel.stop()
         await platform_scheduler.stop()
         await manager.stop()
         await db.close()
@@ -84,3 +92,11 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # 默认启动入口：端口取 .env 的 APP_PORT（ngrok 隧道已自动转发同一端口）。
+    # 需要热重载时改用 CLI：uv run uvicorn app.main:app --reload --port <与 APP_PORT 一致>
+    uvicorn.run(app, host="127.0.0.1", port=get_settings().app_port)

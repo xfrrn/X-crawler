@@ -4,6 +4,7 @@ from typing import Any
 
 from .db import Database
 from .manager import MonitorManager
+from .ngrok_tunnel import NgrokTunnel
 from .scraper import Scraper
 from .stream import SSEManager
 
@@ -16,6 +17,7 @@ class AppState:
     manager: MonitorManager | None = None
     platform_engine: "MediaCrawlerEngine | None" = None
     platform_scheduler: "PlatformScheduler | None" = None
+    ngrok_tunnel: NgrokTunnel | None = None
     started_at: datetime | None = None
     _bag: dict[str, Any] = field(default_factory=dict)
 

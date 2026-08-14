@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     mc_headless: bool = False
     mc_subprocess_timeout: int = 900  # 单次子进程硬超时（秒）
 
+    # ---- ngrok 公网隧道（官方 Python SDK，可选）----
+    # 填入 ngrok authtoken（https://dashboard.ngrok.com 注册后获取）才启用隧道，
+    # 留空则不启动。NGROK_DOMAIN 填已保留的固定域名（免费档无，可留空用随机 URL）。
+    ngrok_auth_token: str = ""
+    ngrok_domain: str = ""
+    app_port: int = 8000  # 隧道转发的本地端口，需与 uvicorn 监听端口一致
+
     @property
     def api_key_list(self) -> list[str]:
         return [k.strip() for k in self.api_keys.split(",") if k.strip()]

@@ -22,6 +22,21 @@ async def health() -> dict:
     }
 
 
+@router.get("/ngrok", dependencies=[Depends(require_api_key)])
+async def ngrok_status() -> dict:
+    """ngrok 公网隧道状态（仅配置了凭据才有意义；免费档 URL 每次重启会变）。"""
+    tunnel = state.ngrok_tunnel
+    if tunnel is None:
+        return {"enabled": False, "started": False}
+    return {
+        "enabled": tunnel.status.enabled,
+        "started": tunnel.status.started,
+        "url": tunnel.status.url,
+        "domain": tunnel.status.domain,
+        "error": tunnel.status.error,
+    }
+
+
 @router.get("/stats", dependencies=[Depends(require_api_key)])
 async def stats() -> dict:
     """聚合统计：每监控运行态、全局抓取量、采集账号健康。"""

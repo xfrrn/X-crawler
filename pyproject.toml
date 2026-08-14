@@ -11,6 +11,7 @@ dependencies = [
     "sse-starlette>=2.0",
     "itsdangerous>=2.0",
     "twscrape",
+    "ngrok>=1.4.0",
 ]
 
 [tool.uv.sources]

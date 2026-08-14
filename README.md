@@ -32,8 +32,11 @@ uv sync
 # 2. 配置
 cp .env.example .env   # 按需修改：API_KEYS、SCRAPER_MODE 等
 
-# 3. 启动服务
-uv run uvicorn app.main:app --reload --port 8000
+# 3. 启动服务（默认端口取 .env 的 APP_PORT，ngrok 隧道自动转发同一端口）
+uv run python -m app.main
+
+# 开发热重载可改用 CLI，注意 --port 需与 APP_PORT 一致：
+# uv run uvicorn app.main:app --reload --port 8000
 ```
 
 ### 无 X 账号时（mock 模式）
@@ -168,6 +171,25 @@ CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
 - ⚠️ MediaCrawler "教学版"落库前会**匿名化**博主身份：库里只有 `creator_hash = sha256(原始id)[:16]`，没有真实昵称/头像。因此归属靠"复算 hash 匹配"完成，**添加监控时 `label`（展示名）必填**，否则列表里无法辨认是谁。
 - 相关接口见下表 `/platform/*` 与 SSE 事件 `platform_post`。
 
+## ngrok 公网隧道
+
+本服务默认跑在 `localhost`，外部（如 AutoUp Cloud）无法直接访问入站接口
+（`/integrations/autoup/*`、`/system/*`）。在 `.env` 填入 ngrok authtoken
+（[dashboard.ngrok.com](https://dashboard.ngrok.com) 注册后获取）后，服务启动时
+会用**官方 ngrok Python SDK** 自动把本地端口暴露为一条公网 HTTPS 隧道：
+
+```bash
+NGROK_AUTHTOKEN=<你的 authtoken>   # 留空则不启用
+NGROK_DOMAIN=                      # 已保留固定域名可填，免费档留空用随机 URL
+APP_PORT=8000                      # 默认启动端口（uv run python -m app.main），隧道自动跟随
+```
+
+- 隧道建立成功后在启动日志打印公网 URL；随时可用 `GET /ngrok`（需 API Key）查询。
+- 免费档公网 URL 每次重启会变，查询该接口即可拿到当前值；要固定 URL 需配置 `NGROK_DOMAIN`。
+- 隧道失败只记 warning，不阻断服务启动；开通后所有接口（含后台面板）均暴露公网，
+  请勿使用默认 `dev-key-1`，并确保 `ADMIN_PASSWORD` 已设强密码。
+- 封装层在 `app/ngrok_tunnel.py`（`NgrokTunnel`），生命周期挂在 FastAPI `lifespan` 上。
+
 ## API 概览
 
 所有接口都需要请求头 `Authorization: Bearer <API_KEYS 中的任意一个>`；后台面板登录后可用 session cookie 免带 Key。
@@ -210,6 +232,7 @@ X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳�
 | GET | `/platform/stats` | 平台监控计数 + 各平台运行态（轮询次数/新增/最近延迟） |
 | POST | `/platform/run/{platform}` | 手动立即抓取某平台（验证用）；无运行中监控→400，正在抓→400 |
 | GET | `/stats` | 聚合统计（每监控运行态、抓取量、账号健康） |
+| GET | `/ngrok` | ngrok 公网隧道状态（启用/已建立/公网 URL/错误） |
 | GET | `/health` | 存活探针（公开，无需 API Key） |
 | POST | `/admin/login` | 后台登录，body `{username, password}`，下发 session cookie |
 | POST | `/admin/logout` | 登出 |
@@ -254,6 +277,9 @@ X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳�
 | `MC_MAX_POSTS_PER_CREATOR` | `15` | 每博主每轮抓取的最新动态条数上限（三平台统一） |
 | `MC_HEADLESS` | `false` | 子进程浏览器无头模式 |
 | `MC_SUBPROCESS_TIMEOUT` | `900` | 单次抓取子进程硬超时（秒） |
+| `NGROK_AUTHTOKEN` | （空） | ngrok 公网隧道凭据；留空不启用（见「ngrok 公网隧道」） |
+| `NGROK_DOMAIN` | （空） | 已保留的固定域名，可选；免费档无则用随机 URL |
+| `APP_PORT` | `8000` | 默认启动端口（`uv run python -m app.main`），ngrok 隧道自动转发同一端口 |
 
 ## 数据去重
 
