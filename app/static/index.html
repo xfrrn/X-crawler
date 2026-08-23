@@ -8,384 +8,173 @@
 </head>
 <body>
 <div id="app">
-  <!-- ================= 登录视图 ================= -->
-  <div v-if="!authed" class="login-wrap">
-    <form class="login-card" @submit.prevent="doLogin">
-      <h1>X-Crawler</h1>
-      <p class="sub">后台管理登录</p>
-      <div v-if="loginError" class="alert error">{{ loginError }}</div>
-      <input v-model.trim="loginForm.username" type="text" placeholder="用户名" autocomplete="username" required>
-      <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" required>
-      <button type="submit" class="btn primary" :disabled="loggingIn">{{ loggingIn ? '登录中…' : '登 录' }}</button>
-    </form>
+  <div v-if="!authed" class="login-shell">
+    <div class="login-brand"><span class="brand-mark">XC</span><strong>X-Crawler</strong></div>
+    <main class="login-stage">
+      <form class="login-panel" @submit.prevent="doLogin">
+        <div class="login-heading"><h1>登录管理控制台</h1><p>管理采集目标、登录会话和运行状态</p></div>
+        <div v-if="loginError" class="alert error" role="alert">{{ loginError }}</div>
+        <label><span>用户名</span><input v-model.trim="loginForm.username" type="text" autocomplete="username" required autofocus></label>
+        <label><span>密码</span><input v-model="loginForm.password" type="password" autocomplete="current-password" required></label>
+        <button type="submit" class="btn primary login-submit" :disabled="loggingIn">{{ loggingIn ? '登录中…' : '登录' }}</button>
+      </form>
+    </main>
   </div>
 
-  <!-- ================= 主界面 ================= -->
-  <div v-else class="app">
+  <div v-else class="app-shell">
     <aside class="sidebar">
-      <div class="brand">X-Crawler <small>管理面板</small></div>
-      <nav class="nav-groups">
+      <a href="#/overview" class="brand" aria-label="X-Crawler 总览">
+        <span class="brand-mark">XC</span>
+        <span class="brand-copy"><strong>X-Crawler</strong><small>数据采集控制台</small></span>
+      </a>
+      <nav class="nav-groups" aria-label="主导航">
         <div v-for="g in groups" :key="g.name" class="nav-group">
-          <div class="nav-group-title">{{ g.name }}</div>
-          <a v-for="p in g.pages" :key="p.key" :href="p.path" :class="{active: route === p.key}">{{ p.label }}</a>
+          <p class="nav-group-title">{{ g.name }}</p>
+          <a v-for="p in g.pages" :key="p.key" :href="p.path" :class="{active: route === p.key}" :aria-current="route === p.key ? 'page' : null">
+            <span class="nav-icon" aria-hidden="true">{{ p.icon }}</span><span>{{ p.label }}</span>
+          </a>
         </div>
       </nav>
       <div class="sidebar-foot">
-        <span class="who">{{ username }}</span>
-        <button class="btn ghost" @click="doLogout">退出登录</button>
+        <span class="user-avatar">{{ username.slice(0, 1).toUpperCase() }}</span>
+        <span class="user-copy"><strong>{{ username }}</strong><small>管理员</small></span>
+        <button class="icon-btn" type="button" title="退出登录" aria-label="退出登录" @click="doLogout">↗</button>
       </div>
     </aside>
 
-    <main class="content">
-      <!-- ================= 监控管理 ================= -->
-      <section v-if="route === 'monitors'">
-        <div class="card">
-          <h2>添加监控</h2>
-          <form class="inline-form" @submit.prevent="addMonitor">
-            <input v-model.trim="monForm.username" placeholder="要监控的 Twitter 用户名" required>
-            <input v-model.number="monForm.interval" type="number" min="1" max="3600" placeholder="轮询间隔(秒)" class="w-150">
-            <button type="submit" class="btn primary" :disabled="monAdding">{{ monAdding ? '添加中…' : '添加监控' }}</button>
-          </form>
-          <div v-if="monError" class="alert error">{{ monError }}</div>
-        </div>
+    <div class="main-shell">
+      <header class="topbar">
+        <div><p class="topbar-context">{{ activePage.group }}</p><h1>{{ activePage.title }}</h1><p>{{ activePage.description }}</p></div>
+        <div class="topbar-actions"><span class="service-state"><i></i>服务运行中</span><button class="btn" type="button" @click="refreshCurrent">刷新数据</button></div>
+      </header>
 
-        <div class="card">
-          <div class="card-head">
-            <h2>监控列表</h2>
-            <span class="muted">{{ monitors.length }} 个监控</span>
-            <div class="spacer"></div>
-            <button class="btn ghost" @click="loadMonitors">刷新</button>
+      <main class="content">
+        <section v-if="route === 'overview'" class="page-section">
+          <div class="metric-grid">
+            <article class="metric-card"><span>采集目标</span><strong>{{ dashboard.targetsTotal }}</strong><small>{{ dashboard.targetsActive }} 个运行中</small></article>
+            <article class="metric-card"><span>已收录内容</span><strong>{{ fmtNum(dashboard.contentsTotal) }}</strong><small>跨全部采集渠道</small></article>
+            <article class="metric-card"><span>今日 X 新增</span><strong>{{ fmtNum(stats.tweets_today ?? 0) }}</strong><small>按 UTC 自然日统计</small></article>
+            <article class="metric-card" :data-state="dashboard.issues ? 'warning' : 'ok'"><span>需要处理</span><strong>{{ dashboard.issues }}</strong><small>{{ dashboard.issues ? '暂停、失效或抓取异常' : '当前运行正常' }}</small></article>
           </div>
-          <div class="tbl-scroll">
-          <table>
-            <thead><tr>
-              <th>ID</th><th>用户名</th><th>昵称</th><th>创建人</th><th>间隔</th><th>状态</th>
-              <th>最近轮询</th><th>最后推文 ID</th><th>错误</th><th>操作</th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="m in monitors" :key="m.id">
-                <td>{{ m.id }}</td>
-                <td class="mono">{{ m.username }}</td>
-                <td>{{ m.display_name || '-' }}</td>
-                <td class="muted">{{ creatorLabel(m.created_by) }}</td>
-                <td>{{ m.interval_seconds }}s</td>
-                <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
-                <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
-                <td class="mono muted" :title="m.last_seen_tweet_id ? '完整ID ' + m.last_seen_tweet_id : ''">{{ m.last_seen_tweet_id ? shortId(m.last_seen_tweet_id) : '-' }}</td>
-                <td class="err-cell" :title="m.last_error">{{ m.last_error || '' }}</td>
-                <td class="ops">
-                  <button v-if="!m.active" class="btn small ghost" @click="resumeMonitor(m)">恢复</button>
-                  <button class="btn small danger" @click="removeMonitor(m)">删除</button>
-                </td>
-              </tr>
-              <tr v-if="!monitors.length"><td colspan="10" class="empty">暂无监控，先在上方添加</td></tr>
-            </tbody>
-          </table>
+          <div class="dashboard-grid">
+            <article class="panel channel-panel">
+              <header class="panel-head"><div><h2>采集渠道</h2><p>目标、内容和最近运行状态</p></div><button class="btn small" @click="go('pmonitors')">管理目标</button></header>
+              <div class="channel-list">
+                <div class="channel-row"><span class="platform-mark">X</span><div><strong>X / Twitter</strong><small>{{ stats.monitors_active ?? 0 }} / {{ stats.monitors_total ?? 0 }} 个目标运行中</small></div><span class="channel-count">{{ fmtNum(stats.tweets_total ?? 0) }} 条</span></div>
+                <div v-for="pl in platforms" :key="pl.key" class="channel-row"><span class="platform-mark">{{ pl.mark }}</span><div><strong>{{ pl.name }}</strong><small>{{ pStats.per_platform?.[pl.key]?.active ?? 0 }} / {{ pStats.per_platform?.[pl.key]?.monitors ?? 0 }} 个目标运行中</small></div><span class="channel-count">{{ fmtNum(pStats.per_platform?.[pl.key]?.posts ?? 0) }} 条</span></div>
+              </div>
+            </article>
+            <article class="panel session-panel">
+              <header class="panel-head"><div><h2>登录与会话</h2><p>采集凭据只保存在本机</p></div></header>
+              <div class="session-summary">
+                <div><span>X 采集账号</span><strong>{{ acc.stats?.active ?? 0 }} / {{ acc.stats?.total ?? 0 }} 可用</strong></div>
+                <div><span>微信公众号后台</span><strong><i class="status-dot" :data-state="wechatSession.status === 'ready' ? 'ok' : 'warning'"></i>{{ wechatStatusLabel() }}</strong></div>
+              </div>
+              <button class="btn panel-action" @click="go('accounts')">管理登录会话</button>
+            </article>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- ================= 推文浏览 ================= -->
-      <section v-if="route === 'tweets'">
-        <div class="card">
-          <div class="inline-form">
-            <select v-model="tweetMonId" @change="loadTweets">
-              <option :value="null" disabled>选择监控</option>
-              <option v-for="m in monitors" :key="m.id" :value="m.id">{{ m.username }} (#{{ m.id }})</option>
-            </select>
-            <input v-model.number="tweetLimit" type="number" min="1" max="200" placeholder="条数" class="w-90">
-            <button class="btn ghost" @click="loadTweets">刷新</button>
-            <span v-if="tweetsLoading" class="muted">加载中…</span>
-            <span v-else class="muted">共 {{ tweets.length }} 条（每 10s 自动刷新）</span>
-          </div>
-        </div>
-
-        <div class="card">
-          <div v-if="tweets.length" class="tweet-list">
-            <div class="tweet" v-for="t in tweets" :key="t.id">
-              <div class="tweet-head">
-                <span class="mono">@{{ t.username }}</span>
-                <span class="muted">{{ fmtTime(t.created_at) }}</span>
-                <span class="mono muted" :title="'完整ID ' + t.id">#{{ shortId(t.id) }}</span>
-              </div>
-              <div v-if="t.content" class="tweet-content" :class="{clamped: !t._exp}" @click="t._exp = !t._exp" :title="'点击' + (t._exp ? '收起' : '展开')">{{ t.content }}</div>
-              <div v-if="t.media" class="tweet-media">
-                <a v-for="(img, i) in t.media.photos || []" :key="'p' + i" :href="img" target="_blank" rel="noopener" title="点击查看原图">
-                  <img :src="img" loading="lazy" alt="图片">
-                </a>
-                <a v-for="(v, i) in t.media.videos || []" :key="'v' + i" :href="(v.urls && v.urls.length) ? v.urls[v.urls.length - 1] : v.cover" target="_blank" rel="noopener" title="点击播放视频">
-                  <img :src="v.cover" loading="lazy" alt="视频"><span class="tplay">视频{{ dur(v.duration_ms) }}</span>
-                </a>
-                <a v-for="(g, i) in t.media.gifs || []" :key="'g' + i" :href="g.url || g.cover" target="_blank" rel="noopener" title="点击查看 GIF">
-                  <img :src="g.cover" loading="lazy" alt="GIF"><span class="tplay">GIF</span>
-                </a>
-              </div>
-              <div class="tweet-meta">
-                <span>赞 {{ fmtNum(t.like_count ?? 0) }}</span>
-                <span>转 {{ fmtNum(t.retweet_count ?? 0) }}</span>
-                <span>回 {{ fmtNum(t.reply_count ?? 0) }}</span>
-                <span v-if="t.lang" class="muted">[{{ t.lang }}]</span>
-              </div>
+        <section v-if="route === 'monitors'" class="page-section">
+          <article class="panel">
+            <header class="panel-head"><div><h2>X 采集目标</h2><p>{{ monitors.length }} 个账号，历史内容在停止后仍会保留</p></div><button class="btn primary" @click="openDialog('monitorDialog')">添加 X 账号</button></header>
+            <div class="target-list">
+              <article v-for="m in monitors" :key="m.id" class="target-row">
+                <div class="target-identity"><span class="platform-mark">X</span><div><strong>@{{ m.username }}</strong><small>{{ m.display_name || '未获取昵称' }} · #{{ m.id }} · 每 {{ m.interval_seconds }} 秒</small></div></div>
+                <div class="target-state"><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span><small>上次采集 {{ fmtTime(m.last_poll_at) }}</small></div>
+                <p v-if="m.last_error" class="row-error" :title="m.last_error">{{ m.last_error }}</p>
+                <div class="row-actions"><button class="btn small" @click="openTweets(m)">查看内容</button><button v-if="!m.active" class="btn small" @click="resumeMonitor(m)">恢复</button><button class="btn small danger" @click="removeMonitor(m)">删除</button></div>
+              </article>
+              <div v-if="!monitors.length" class="empty-state"><strong>还没有 X 采集目标</strong><p>添加一个账号后，采集器会按设定间隔自动拉取内容。</p><button class="btn primary" @click="openDialog('monitorDialog')">添加 X 账号</button></div>
             </div>
-          </div>
-          <div v-else-if="tweetMonId != null" class="empty">还没有推文（点击刷新拉取）</div>
-          <div v-else class="empty">先选择一个监控</div>
-        </div>
-      </section>
+          </article>
+        </section>
 
-      <!-- ================= 平台监控 ================= -->
-      <section v-if="route === 'pmonitors'">
-        <div class="cards">
-          <div class="stat-card" v-for="pl in platforms" :key="pl.key">
-            <div class="num ok">{{ (pStats.per_platform && pStats.per_platform[pl.key]) ? pStats.per_platform[pl.key].active : '-' }}</div>
-            <div class="lbl">{{ pl.name }}监控</div>
+        <section v-if="route === 'pmonitors'" class="page-section">
+          <div class="metric-grid platform-metrics">
+            <button v-for="pl in platforms" :key="pl.key" class="metric-card metric-filter" :data-active="pMonitorFilter === pl.key" @click="pMonitorFilter = pMonitorFilter === pl.key ? 'all' : pl.key"><span>{{ pl.name }}</span><strong>{{ pStats.per_platform?.[pl.key]?.active ?? 0 }}</strong><small>{{ pStats.per_platform?.[pl.key]?.posts ?? 0 }} 条内容</small></button>
           </div>
-        </div>
-
-        <div class="card wechat-session-card">
-          <div class="card-head">
-            <div>
-              <h2>微信公众号采集登录</h2>
-              <p class="hint">登录态只保存在 X-crawler 的 DATA_DIR，不会传给 AutoUp Cloud 或 Desktop。</p>
+          <article class="panel">
+            <header class="panel-head">
+              <div><h2>平台采集目标</h2><p>{{ visiblePlatformMonitors.length }} 个当前筛选目标</p></div>
+              <div class="header-actions"><div class="run-form"><select v-model="runPlat" aria-label="选择要抓取的平台"><option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option></select><button class="btn" @click="triggerPlatformRun(runPlat)">立即抓取</button></div><button class="btn primary" @click="openDialog('platformMonitorDialog')">添加目标</button></div>
+            </header>
+            <div v-if="pMsg" class="alert" :class="pMsgOk ? 'ok' : 'error'">{{ pMsg }}</div>
+            <div class="target-list">
+              <article v-for="m in visiblePlatformMonitors" :key="m.id" class="target-row">
+                <div class="target-identity"><span class="platform-mark">{{ platformMark(m.platform) }}</span><div><strong>{{ m.label }}</strong><small>{{ platName(m.platform) }} · <span class="mono" :title="m.creator_id">{{ shortId(m.creator_id, 8, 6) }}</span> · #{{ m.id }}</small></div></div>
+                <div class="target-state"><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span><span class="badge crawl" :class="platCrawlStatus(m.platform).cls" :title="platRunTip(m.platform)">{{ platCrawlStatus(m.platform).text }}</span><small>上次采集 {{ fmtTime(m.last_poll_at) }}</small></div>
+                <p v-if="m.last_error" class="row-error" :title="m.last_error">{{ m.last_error }}</p>
+                <div class="row-actions"><button class="btn small" @click="openPlatformPosts(m)">查看内容</button><button v-if="!m.active" class="btn small" @click="resumePlatformMonitor(m)">恢复</button><button class="btn small danger" @click="removePlatformMonitor(m)">停止</button></div>
+              </article>
+              <div v-if="!visiblePlatformMonitors.length" class="empty-state"><strong>当前筛选下没有目标</strong><p>添加小红书、抖音、快手或微信公众号作为采集目标。</p><button class="btn primary" @click="openDialog('platformMonitorDialog')">添加目标</button></div>
             </div>
-            <div class="spacer"></div>
-            <span class="badge" :class="wechatSession.status === 'ready' ? 'ok' : 'off'">{{ wechatStatusLabel() }}</span>
-            <button class="btn primary" :disabled="wechatBusy" @click="startWechatLogin">
-              {{ wechatBusy ? '启动中…' : wechatSession.status === 'ready' ? '重新扫码' : '扫码登录' }}
-            </button>
-          </div>
-          <div v-if="wechatSession.lastError" class="alert error">{{ wechatSession.lastError }}</div>
-          <div v-if="wechatSession.qrReady" class="wechat-qr">
-            <img :src="wechatQrUrl" alt="微信公众号后台登录二维码">
-            <p>请使用微信扫码，并在手机上确认登录。</p>
-          </div>
-          <p v-else-if="wechatSession.savedAt" class="hint">会话保存时间：{{ fmtTime(wechatSession.savedAt) }}</p>
-        </div>
+          </article>
+        </section>
 
-        <div class="card">
-          <h2>添加平台监控</h2>
-          <form class="inline-form" @submit.prevent="addPlatformMonitor">
-            <select v-model="pmForm.platform">
-              <option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option>
-            </select>
-            <input v-model.trim="pmForm.creator_id" placeholder="主页 URL、ID 或公众号精确名称" class="w-300" required>
-            <input v-model.trim="pmForm.label" placeholder="展示名（昵称已脱敏，必填）" class="w-200" required>
-            <button type="submit" class="btn primary" :disabled="pmAdding">{{ pmAdding ? '添加中…' : '添加监控' }}</button>
-          </form>
-          <div v-if="pmError" class="alert error">{{ pmError }}</div>
-          <p class="hint">
-            小红书：填带 xsec_token 的完整主页链接；抖音/快手：填主页链接或裸 ID；微信公众号：填精确名称或 fakeid。
-            每个博主每轮最多抓取最新 15 条，重复内容自动去重、数据更新。
-          </p>
-        </div>
+        <section v-if="route === 'tweets'" class="page-section">
+          <article class="panel filter-bar">
+            <label><span>X 账号</span><select v-model="tweetMonId" @change="loadTweets"><option :value="null" disabled>选择采集目标</option><option v-for="m in monitors" :key="m.id" :value="m.id">@{{ m.username }}</option></select></label>
+            <label><span>显示条数</span><input v-model.number="tweetLimit" type="number" min="1" max="200"></label>
+            <button class="btn" @click="loadTweets">刷新</button><span class="filter-result">{{ tweetsLoading ? '加载中…' : '共 ' + tweets.length + ' 条，每 10 秒刷新' }}</span>
+          </article>
+          <div class="feed-list">
+            <article v-for="t in tweets" :key="t.id" class="content-card">
+              <header><div><strong>@{{ t.username }}</strong><span>{{ fmtTime(t.created_at) }}</span></div><span class="mono muted" :title="'完整ID ' + t.id">#{{ shortId(t.id) }}</span></header>
+              <p v-if="t.content" class="content-copy" :class="{clamped: !t._exp}" @click="t._exp = !t._exp">{{ t.content }}</p>
+              <div v-if="t.media" class="media-grid"><a v-for="(img, i) in t.media.photos || []" :key="'p' + i" :href="img" target="_blank" rel="noopener"><img :src="img" loading="lazy" alt="图片"></a><a v-for="(v, i) in t.media.videos || []" :key="'v' + i" :href="(v.urls && v.urls.length) ? v.urls[v.urls.length - 1] : v.cover" target="_blank" rel="noopener"><img :src="v.cover" loading="lazy" alt="视频"><span class="media-label">视频{{ dur(v.duration_ms) }}</span></a><a v-for="(g, i) in t.media.gifs || []" :key="'g' + i" :href="g.url || g.cover" target="_blank" rel="noopener"><img :src="g.cover" loading="lazy" alt="GIF"><span class="media-label">GIF</span></a></div>
+              <footer><span>赞 {{ fmtNum(t.like_count ?? 0) }}</span><span>转 {{ fmtNum(t.retweet_count ?? 0) }}</span><span>回复 {{ fmtNum(t.reply_count ?? 0) }}</span><span v-if="t.lang">{{ t.lang }}</span></footer>
+            </article>
+            <div v-if="!tweets.length" class="panel empty-state"><strong>{{ tweetMonId == null ? '先选择一个 X 账号' : '还没有采集到内容' }}</strong><p>内容会按采集间隔自动更新，也可以手动刷新本页。</p></div>
+          </div>
+        </section>
 
-        <div class="card">
-          <div class="card-head">
-            <h2>平台监控列表</h2>
-            <span class="muted">{{ pmonitors.length }} 个监控</span>
-            <div class="spacer"></div>
-            <div class="run-form">
-              <select v-model="runPlat" class="w-auto" aria-label="选择要抓取的平台">
-                <option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option>
-              </select>
-              <button class="btn primary" @click="triggerPlatformRun(runPlat)">立即抓取</button>
-              <button class="btn ghost" @click="loadPlatformMonitors">刷新</button>
-            </div>
+        <section v-if="route === 'pposts'" class="page-section">
+          <article class="panel filter-bar">
+            <label><span>平台</span><select v-model="pPlat" @change="onPlatformChange"><option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option></select></label>
+            <label><span>采集目标</span><select v-model="pMonId" @change="loadPlatformPosts"><option :value="null" disabled>选择采集目标</option><option v-for="m in pmOfPlat(pPlat)" :key="m.id" :value="m.id">{{ m.label }}</option></select></label>
+            <label><span>显示条数</span><input v-model.number="pLimit" type="number" min="1" max="200"></label>
+            <button class="btn" @click="loadPlatformPosts">刷新</button><span class="filter-result">{{ pLoading ? '加载中…' : '共 ' + pposts.length + ' 条，每 10 秒刷新' }}</span>
+          </article>
+          <div class="feed-list">
+            <article v-for="p in pposts" :key="p.id" class="content-card platform-content-card">
+              <a v-if="p.cover_url || p.image_urls?.[0]" class="content-cover" :href="p.work_url || p.video_url || p.cover_url || p.image_urls[0]" target="_blank" rel="noopener"><img :src="p.cover_url || p.image_urls[0]" loading="lazy" alt="内容封面"><span v-if="p.video_url" class="media-label">视频</span></a>
+              <div class="content-body"><header><div><strong>{{ pmLabel(p.monitor_id) }}</strong><span>{{ platName(p.platform) }} · {{ fmtTime(p.created_at) }}</span></div><span class="mono muted" :title="'完整ID ' + p.content_id">#{{ shortId(p.content_id) }}</span></header><h2 v-if="p.title && p.title !== p.content">{{ p.title }}</h2><p v-if="p.content" class="content-copy" :class="{clamped: !p._exp}" @click="p._exp = !p._exp">{{ p.content }}</p><div v-if="p.image_urls?.length > 1" class="media-grid compact"><a v-for="(img, i) in p.image_urls.slice(1, 5)" :key="i" :href="img" target="_blank" rel="noopener"><img :src="img" loading="lazy" alt="图片"></a></div><footer><span v-if="p.stats?.likes != null">赞 {{ fmtNum(p.stats.likes) }}</span><span v-if="p.stats?.comments != null">评 {{ fmtNum(p.stats.comments) }}</span><span v-if="p.stats?.shares != null">转 {{ fmtNum(p.stats.shares) }}</span><span v-if="p.stats?.views != null">看 {{ fmtNum(p.stats.views) }}</span><a v-if="p.work_url" :href="p.work_url" target="_blank" rel="noopener">打开原文</a></footer></div>
+            </article>
+            <div v-if="!pposts.length" class="panel empty-state"><strong>{{ pMonId == null ? '先选择一个采集目标' : '还没有采集到内容' }}</strong><p>可在“平台目标”页手动触发一次采集。</p></div>
           </div>
-          <div v-if="pMsg" class="alert" :class="pMsgOk ? 'ok' : 'error'">{{ pMsg }}</div>
-          <div class="tbl-scroll">
-          <table>
-            <thead><tr>
-              <th>ID</th><th>平台</th><th>展示名</th><th>creator_id</th><th>创建人</th><th>状态</th><th>抓取状态</th>
-              <th>最近轮询</th><th>错误</th><th>操作</th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="m in pmonitors" :key="m.id">
-                <td>{{ m.id }}</td>
-                <td>{{ platName(m.platform) }}</td>
-                <td>{{ m.label }}</td>
-                <td class="mono muted ellipsis w-260" :title="m.creator_id">{{ m.creator_id }}</td>
-                <td class="muted">{{ creatorLabel(m.created_by) }}</td>
-                <td><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span></td>
-                <td><span class="badge crawl" :class="platCrawlStatus(m.platform).cls" :title="platRunTip(m.platform)">{{ platCrawlStatus(m.platform).text }}</span></td>
-                <td class="muted">{{ fmtTime(m.last_poll_at) }}</td>
-                <td class="err-cell" :title="m.last_error">{{ m.last_error || '' }}</td>
-                <td class="ops">
-                  <button v-if="!m.active" class="btn small ghost" @click="resumePlatformMonitor(m)">恢复</button>
-                  <button class="btn small danger" @click="removePlatformMonitor(m)">停止</button>
-                </td>
-              </tr>
-              <tr v-if="!pmonitors.length"><td colspan="10" class="empty">暂无平台监控，先在上方添加</td></tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- ================= 平台内容 ================= -->
-      <section v-if="route === 'pposts'">
-        <div class="card">
-          <div class="inline-form">
-            <select v-model="pPlat" @change="onPlatformChange">
-              <option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option>
-            </select>
-            <select v-model="pMonId" @change="loadPlatformPosts">
-              <option :value="null" disabled>选择博主</option>
-              <option v-for="m in pmOfPlat(pPlat)" :key="m.id" :value="m.id">{{ m.label }} (#{{ m.id }})</option>
-            </select>
-            <input v-model.number="pLimit" type="number" min="1" max="200" placeholder="条数" class="w-90">
-            <button class="btn ghost" @click="loadPlatformPosts">刷新</button>
-            <span v-if="pLoading" class="muted">加载中…</span>
-            <span v-else class="muted">共 {{ pposts.length }} 条（每 10s 自动刷新）</span>
+        <section v-if="route === 'accounts'" class="page-section">
+          <div class="metric-grid account-metrics"><article class="metric-card"><span>X 账号总数</span><strong>{{ acc.stats?.total ?? 0 }}</strong><small>本机采集账号池</small></article><article class="metric-card" data-state="ok"><span>当前可用</span><strong>{{ acc.stats?.active ?? 0 }}</strong><small>已登录且未锁定</small></article><article class="metric-card" :data-state="(acc.stats?.inactive ?? 0) ? 'warning' : ''"><span>需要处理</span><strong>{{ acc.stats?.inactive ?? 0 }}</strong><small>失效或未登录账号</small></article></div>
+          <div class="settings-grid">
+            <article class="panel wechat-session-card">
+              <header class="panel-head"><div><h2>微信公众号后台</h2><p>扫码会话仅保存在 X-Crawler 本机</p></div><span class="badge" :class="wechatSession.status === 'ready' ? 'ok' : 'off'">{{ wechatStatusLabel() }}</span></header>
+              <div v-if="wechatSession.lastError" class="alert error">{{ wechatSession.lastError }}</div><div v-if="wechatSession.qrReady" class="wechat-qr"><img :src="wechatQrUrl" alt="微信公众号后台登录二维码"><p>使用微信扫码，并在手机上确认登录。</p></div><p v-else class="session-note">{{ wechatSession.savedAt ? '会话保存于 ' + fmtTime(wechatSession.savedAt) : '尚未建立微信公众号后台会话。' }}</p>
+              <button class="btn primary panel-action" :disabled="wechatBusy" @click="startWechatLogin">{{ wechatBusy ? '启动中…' : wechatSession.status === 'ready' ? '重新扫码' : '扫码登录' }}</button>
+            </article>
+            <article class="panel account-setup">
+              <header class="panel-head"><div><h2>添加 X 采集账号</h2><p>推荐优先导入浏览器登录后的 Cookies</p></div></header><div v-if="accMsg" class="alert" :class="accMsgOk ? 'ok' : 'error'">{{ accMsg }}</div>
+              <details open><summary>导入 Cookies（推荐）</summary><form class="stack-form" @submit.prevent="addAccountByCookies"><label><span>用户名</span><input v-model.trim="ckForm.username" required></label><label><span>Cookies</span><textarea v-model="ckForm.cookies" rows="4" placeholder="auth_token=...; ct0=..." required></textarea></label><button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '导入并验证' }}</button></form></details>
+              <details><summary>使用密码登录</summary><form class="stack-form" @submit.prevent="addAccountByPassword"><label><span>用户名</span><input v-model.trim="pwForm.username" autocomplete="username" required></label><label><span>密码</span><input v-model="pwForm.password" type="password" autocomplete="new-password" required></label><label><span>邮箱（可选）</span><input v-model="pwForm.email"></label><label><span>邮箱密码（可选）</span><input v-model="pwForm.email_password" type="password" autocomplete="new-password"></label><label><span>代理（可选）</span><input v-model="pwForm.proxy" placeholder="http://user:pass@host:port"></label><button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '添加并登录' }}</button></form></details>
+            </article>
           </div>
-        </div>
+          <article class="panel"><header class="panel-head"><div><h2>X 账号健康</h2><p>登录失败或会话失效时可重新登录</p></div></header><div class="target-list compact-list"><article v-for="a in acc.accounts || []" :key="a.username" class="target-row"><div class="target-identity"><span class="platform-mark">X</span><div><strong>@{{ a.username }}</strong><small>{{ a.login_method || '未知登录方式' }} · {{ a.total_req ?? 0 }} 次请求</small></div></div><div class="target-state"><span class="badge" :class="avail(a) ? 'ok' : 'off'">{{ avail(a) ? '可用' : '不可用' }}</span><small>最近使用 {{ a.last_used || '-' }}</small></div><p v-if="a.error_msg" class="row-error" :title="a.error_msg">{{ a.error_msg }}</p><div class="row-actions"><button class="btn small" @click="reloginAccount(a)">重新登录</button><button class="btn small danger" @click="removeAccount(a)">删除</button></div></article><div v-if="!acc.accounts?.length" class="empty-state"><strong>还没有 X 采集账号</strong><p>先在上方导入 Cookies，或使用账号密码登录。</p></div></div></article>
+        </section>
 
-        <div class="card">
-          <div v-if="pposts.length" class="tweet-list">
-            <div class="tweet" v-for="p in pposts" :key="p.id">
-              <div class="tweet-head">
-                <span class="mono">{{ pmLabel(p.monitor_id) }}</span>
-                <span class="muted">{{ fmtTime(p.created_at) }}</span>
-                <span class="mono muted" :title="'完整ID ' + p.content_id">#{{ shortId(p.content_id) }}</span>
-              </div>
-              <div v-if="p.title || p.content" class="tweet-content" :class="{clamped: !p._exp}" @click="p._exp = !p._exp" :title="'点击' + (p._exp ? '收起' : '展开')">
-                <template v-if="p.title && p.title !== p.content"><strong>{{ p.title }}</strong><br></template>{{ p.content }}
-              </div>
-              <div v-if="p.image_urls && p.image_urls.length" class="tweet-media">
-                <a v-for="(img, i) in p.image_urls" :key="'p' + i" :href="img" target="_blank" rel="noopener" title="点击查看原图">
-                  <img :src="img" loading="lazy" alt="图片">
-                </a>
-              </div>
-              <div v-if="p.video_url" class="tweet-media">
-                <a :href="p.video_url" target="_blank" rel="noopener" title="点击播放视频">
-                  <img :src="p.cover_url || (p.image_urls && p.image_urls[0])" loading="lazy" alt="视频"><span class="tplay">视频</span>
-                </a>
-              </div>
-              <div v-else-if="p.cover_url" class="tweet-media">
-                <a :href="p.work_url || p.cover_url" target="_blank" rel="noopener" title="打开原文">
-                  <img :src="p.cover_url" loading="lazy" alt="文章封面">
-                </a>
-              </div>
-              <div class="tweet-meta">
-                <span v-if="p.stats && p.stats.likes != null">赞 {{ fmtNum(p.stats.likes) }}</span>
-                <span v-if="p.stats && p.stats.comments != null">评 {{ fmtNum(p.stats.comments) }}</span>
-                <span v-if="p.stats && p.stats.shares != null">转 {{ fmtNum(p.stats.shares) }}</span>
-                <span v-if="p.stats && p.stats.views != null">看 {{ fmtNum(p.stats.views) }}</span>
-                <a v-if="p.work_url" :href="p.work_url" target="_blank" rel="noopener">打开原文</a>
-              </div>
-            </div>
-          </div>
-          <div v-else-if="pMonId != null" class="empty">还没有内容（点击刷新拉取，或在上方「平台监控」里点「立即抓取」）</div>
-          <div v-else class="empty">先选择一个博主</div>
-        </div>
-      </section>
+        <section v-if="route === 'stats'" class="page-section">
+          <div class="metric-grid"><article class="metric-card"><span>服务运行</span><strong class="metric-text">{{ fmtDur(stats.uptime_seconds) }}</strong><small>{{ stats.scraper_mode || '-' }} 模式</small></article><article class="metric-card"><span>轮询次数</span><strong>{{ fmtNum(dashboard.totalPolls) }}</strong><small>全部 X 目标累计</small></article><article class="metric-card"><span>采集新增</span><strong>{{ fmtNum(dashboard.totalNew) }}</strong><small>本次进程累计</small></article><article class="metric-card" :data-state="dashboard.runtimeErrors ? 'warning' : 'ok'"><span>连续错误</span><strong>{{ dashboard.runtimeErrors }}</strong><small>全部目标合计</small></article></div>
+          <article class="panel"><header class="panel-head"><div><h2>X 目标运行明细</h2><p>用于定位退避、暂停和请求延迟</p></div></header><div class="table-scroll"><table><thead><tr><th>目标</th><th>状态</th><th>基础间隔</th><th>当前间隔</th><th>轮询</th><th>新增</th><th>最近耗时</th><th>错误</th></tr></thead><tbody><tr v-for="d in stats.monitors_detail || []" :key="d.id"><td><strong>@{{ d.username }}</strong><small>#{{ d.id }}</small></td><td><span class="badge" :class="d.active ? 'ok' : 'off'">{{ d.active ? '运行中' : '已暂停' }}</span></td><td>{{ d.interval_seconds }}s</td><td>{{ d.current_interval != null ? d.current_interval + 's' : '-' }}</td><td>{{ d.total_polls }}</td><td>{{ d.total_new }}</td><td>{{ fmtMs(d.last_poll_ms) }}</td><td class="error-cell" :title="d.last_error">{{ d.last_error || '-' }}</td></tr><tr v-if="!stats.monitors_detail?.length"><td colspan="8" class="table-empty">暂无运行数据</td></tr></tbody></table></div></article>
+        </section>
+      </main>
+    </div>
 
-      <!-- ================= 统计看板 ================= -->
-      <section v-if="route === 'stats'">
-        <div class="cards">
-          <div class="stat-card"><div class="num">{{ stats.monitors_total ?? '-' }}</div><div class="lbl">监控总数</div></div>
-          <div class="stat-card"><div class="num ok">{{ stats.monitors_active ?? '-' }}</div><div class="lbl">运行中</div></div>
-          <div class="stat-card"><div class="num off">{{ stats.monitors_paused ?? '-' }}</div><div class="lbl">已暂停</div></div>
-          <div class="stat-card"><div class="num">{{ stats.tweets_total ?? '-' }}</div><div class="lbl">抓取推文</div></div>
-          <div class="stat-card"><div class="num">{{ stats.tweets_today ?? '-' }}</div><div class="lbl">今日新增</div></div>
-          <div class="stat-card"><div class="num">{{ stats.accounts?.total ?? '-' }}</div><div class="lbl">采集账号</div></div>
-        </div>
-
-        <div class="card">
-          <div class="card-head">
-            <h2>监控运行态</h2>
-            <span class="muted">已运行 {{ fmtDur(stats.uptime_seconds) }}</span>
-            <div class="spacer"></div>
-            <button class="btn ghost" @click="loadStats">刷新</button>
-          </div>
-          <div class="tbl-scroll">
-          <table>
-            <thead><tr>
-              <th>ID</th><th>用户名</th><th>基础间隔</th><th>当前间隔</th><th>连续错误</th>
-              <th>轮询次数</th><th>新增推文</th><th>最近延迟</th><th>错误</th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="d in stats.monitors_detail || []" :key="d.id">
-                <td>{{ d.id }}</td>
-                <td class="mono">{{ d.username }}</td>
-                <td>{{ d.interval_seconds }}s</td>
-                <td>{{ d.current_interval != null ? d.current_interval + 's' : '-' }}</td>
-                <td :class="d.consecutive_errors > 0 ? 'err' : ''">{{ d.consecutive_errors }}</td>
-                <td>{{ d.total_polls }}</td>
-                <td>{{ d.total_new }}</td>
-                <td class="muted">{{ fmtMs(d.last_poll_ms) }}</td>
-                <td class="err-cell" :title="d.last_error">{{ d.last_error || '' }}</td>
-              </tr>
-              <tr v-if="!stats.monitors_detail || !stats.monitors_detail.length"><td colspan="9" class="empty">暂无监控</td></tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- ================= 采集账号管理 ================= -->
-      <section v-if="route === 'accounts'">
-        <div class="cards">
-          <div class="stat-card"><div class="num">{{ acc.stats?.total ?? '-' }}</div><div class="lbl">账号总数</div></div>
-          <div class="stat-card"><div class="num ok">{{ acc.stats?.active ?? '-' }}</div><div class="lbl">可用</div></div>
-          <div class="stat-card"><div class="num off">{{ acc.stats?.inactive ?? '-' }}</div><div class="lbl">失效</div></div>
-        </div>
-
-        <div class="card">
-          <h2>添加采集账号</h2>
-          <div v-if="accMsg" class="alert" :class="accMsgOk ? 'ok' : 'error'">{{ accMsg }}</div>
-          <div class="acc-forms">
-            <form class="acc-form" @submit.prevent="addAccountByPassword">
-              <h3>密码登录</h3>
-              <input v-model.trim="pwForm.username" placeholder="用户名" autocomplete="username" required>
-              <input v-model="pwForm.password" type="password" placeholder="密码" autocomplete="new-password" required>
-              <input v-model="pwForm.email" placeholder="邮箱（可选，用于登录验证码）">
-              <input v-model="pwForm.email_password" type="password" placeholder="邮箱密码（可选）" autocomplete="new-password">
-              <input v-model="pwForm.proxy" placeholder="代理 http://user:pass@host:port（可选，默认全局代理）">
-              <button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '添加并登录' }}</button>
-            </form>
-            <form class="acc-form" @submit.prevent="addAccountByCookies">
-              <h3>导入 cookies（更稳）</h3>
-              <input v-model.trim="ckForm.username" placeholder="用户名" required>
-              <textarea v-model="ckForm.cookies" rows="4" placeholder='形如 "auth_token=...; ct0=..."（浏览器登录 X 后，开发者工具 → 网络 → 请求头里复制）' required></textarea>
-              <button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '导入' }}</button>
-            </form>
-          </div>
-          <p class="hint">可用 = 已登录且未锁定；登录失败或会话失效的账号可点「重新登录」重试。</p>
-        </div>
-
-        <div class="card">
-          <div class="card-head">
-            <h2>账号健康</h2>
-            <div class="spacer"></div>
-            <button class="btn ghost" @click="loadAccounts">刷新</button>
-          </div>
-          <div class="tbl-scroll">
-          <table>
-            <thead><tr>
-              <th>用户名</th><th>可用性</th><th>登录方式</th><th>最近使用</th><th>请求量</th><th>错误</th><th>操作</th>
-            </tr></thead>
-            <tbody>
-              <tr v-for="a in acc.accounts || []" :key="a.username">
-                <td class="mono">{{ a.username }}</td>
-                <td><span class="badge" :class="avail(a) ? 'ok' : 'off'">{{ avail(a) ? '可用' : '不可用' }}</span></td>
-                <td class="muted">{{ a.login_method || '-' }}</td>
-                <td class="muted">{{ a.last_used || '-' }}</td>
-                <td>{{ a.total_req ?? 0 }}</td>
-                <td class="err-cell" :title="a.error_msg">{{ a.error_msg || '' }}</td>
-                <td class="ops">
-                  <button class="btn small ghost" @click="reloginAccount(a)">重新登录</button>
-                  <button class="btn small danger" @click="removeAccount(a)">删除</button>
-                </td>
-              </tr>
-              <tr v-if="!acc.accounts || !acc.accounts.length"><td colspan="7" class="empty">没有采集账号，先在上方添加</td></tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </section>
-    </main>
+    <dialog ref="monitorDialog" class="dialog-shell" @cancel="closeDialog('monitorDialog')"><form @submit.prevent="addMonitor"><header><div><h2>添加 X 采集目标</h2><p>系统会按设定间隔采集该账号的新内容。</p></div><button type="button" class="icon-btn" aria-label="关闭" @click="closeDialog('monitorDialog')">×</button></header><label><span>X 用户名</span><input v-model.trim="monForm.username" placeholder="例如 OpenAI" required></label><label><span>轮询间隔（秒）</span><input v-model.number="monForm.interval" type="number" min="1" max="3600" required></label><div v-if="monError" class="alert error">{{ monError }}</div><footer><button type="button" class="btn" @click="closeDialog('monitorDialog')">取消</button><button type="submit" class="btn primary" :disabled="monAdding">{{ monAdding ? '添加中…' : '添加目标' }}</button></footer></form></dialog>
+    <dialog ref="platformMonitorDialog" class="dialog-shell" @cancel="closeDialog('platformMonitorDialog')"><form @submit.prevent="addPlatformMonitor"><header><div><h2>添加平台采集目标</h2><p>每轮最多采集最新 15 条内容，重复内容自动去重。</p></div><button type="button" class="icon-btn" aria-label="关闭" @click="closeDialog('platformMonitorDialog')">×</button></header><label><span>平台</span><select v-model="pmForm.platform"><option v-for="pl in platforms" :key="pl.key" :value="pl.key">{{ pl.name }}</option></select></label><label><span>{{ pmForm.platform === 'wx' ? '公众号精确名称或 fakeid' : '主页 URL 或创作者 ID' }}</span><input v-model.trim="pmForm.creator_id" required></label><label><span>展示名</span><input v-model.trim="pmForm.label" placeholder="用于在控制台识别该目标" required></label><p class="form-help">小红书需填写带 xsec_token 的完整主页链接；微信公众号名称必须精确匹配。</p><div v-if="pmError" class="alert error">{{ pmError }}</div><footer><button type="button" class="btn" @click="closeDialog('platformMonitorDialog')">取消</button><button type="submit" class="btn primary" :disabled="pmAdding">{{ pmAdding ? '添加中…' : '添加目标' }}</button></footer></form></dialog>
+    <dialog ref="confirmDialog" class="dialog-shell confirm-dialog" @cancel="cancelConfirm"><div class="dialog-form"><header><div><h2>确认操作</h2><p>{{ confirmMessage }}</p></div><button type="button" class="icon-btn" aria-label="关闭" @click="cancelConfirm">×</button></header><footer><button type="button" class="btn" @click="cancelConfirm">取消</button><button type="button" class="btn danger solid" @click="runConfirmed">确认</button></footer></div></dialog>
   </div>
+
+  <div v-if="toast.message" class="toast" :class="toast.kind" role="status">{{ toast.message }}</div>
 </div>
 <script src="/vendor/vue.global.prod.js"></script>
 <script src="/app.js"></script>

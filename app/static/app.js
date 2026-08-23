@@ -1,22 +1,40 @@
 /* X-Crawler 管理面板 SPA（无构建，直接加载 vue.global.prod.js） */
 const { createApp } = Vue;
 
-/* 左侧导航：X（推特）与多平台两组分开 */
+/* 管理信息按任务分组，避免把采集引擎的内部划分暴露给日常使用者。 */
 const GROUPS = [
   {
-    name: "X · 推特",
+    name: "工作台",
     pages: [
-      { key: "monitors", path: "#/monitors", label: "监控管理" },
-      { key: "tweets", path: "#/tweets", label: "推文浏览" },
-      { key: "stats", path: "#/stats", label: "统计看板" },
-      { key: "accounts", path: "#/accounts", label: "采集账号" },
+      {
+        key: "overview",
+        path: "#/overview",
+        label: "总览",
+        icon: "总",
+        title: "采集总览",
+        description: "查看全部渠道、目标和登录会话的当前状态",
+      },
     ],
   },
   {
-    name: "中文内容平台",
+    name: "采集目标",
     pages: [
-      { key: "pmonitors", path: "#/pmonitors", label: "平台监控" },
-      { key: "pposts", path: "#/pposts", label: "平台内容" },
+      { key: "monitors", path: "#/monitors", label: "X 账号", icon: "X", title: "X 采集目标", description: "添加账号并管理轮询状态", },
+      { key: "pmonitors", path: "#/pmonitors", label: "平台目标", icon: "平", title: "平台采集目标", description: "管理小红书、抖音、快手和微信公众号", },
+    ],
+  },
+  {
+    name: "内容库",
+    pages: [
+      { key: "tweets", path: "#/tweets", label: "X 内容", icon: "推", title: "X 内容库", description: "浏览已采集的推文与媒体", },
+      { key: "pposts", path: "#/pposts", label: "平台内容", icon: "库", title: "平台内容库", description: "按平台和采集目标浏览最新内容", },
+    ],
+  },
+  {
+    name: "系统",
+    pages: [
+      { key: "accounts", path: "#/accounts", label: "登录与会话", icon: "钥", title: "登录与会话", description: "管理 X 采集账号和微信公众号后台会话", },
+      { key: "stats", path: "#/stats", label: "运行状态", icon: "态", title: "运行状态", description: "检查轮询、退避、错误和服务运行时间", },
     ],
   },
 ];
@@ -24,7 +42,7 @@ const PAGES = GROUPS.flatMap((g) => g.pages);
 
 function currentRoute() {
   const h = location.hash.replace(/^#\/?/, "");
-  return PAGES.some((p) => p.key === h) ? h : "monitors";
+  return PAGES.some((p) => p.key === h) ? h : "overview";
 }
 
 /* 格式化工具 */
@@ -90,12 +108,13 @@ createApp({
       tweetsLoading: false,
       // 平台监控
       platforms: [
-        { key: "xhs", name: "小红书" },
-        { key: "dy", name: "抖音" },
-        { key: "ks", name: "快手" },
-        { key: "wx", name: "微信公众号" },
+        { key: "xhs", name: "小红书", mark: "红" },
+        { key: "dy", name: "抖音", mark: "抖" },
+        { key: "ks", name: "快手", mark: "快" },
+        { key: "wx", name: "微信公众号", mark: "微" },
       ],
       pmonitors: [],
+      pMonitorFilter: "all",
       pmForm: { platform: "xhs", creator_id: "", label: "" },
       pmAdding: false,
       pmError: "",
@@ -121,8 +140,52 @@ createApp({
       accMsgOk: false,
       pwForm: { username: "", password: "", email: "", email_password: "", proxy: "" },
       ckForm: { username: "", cookies: "" },
+      toast: { message: "", kind: "" },
+      toastTimer: null,
+      confirmMessage: "",
+      confirmAction: null,
       tick: 0,
     };
+  },
+  computed: {
+    activePage() {
+      const page = PAGES.find((item) => item.key === this.route) || PAGES[0];
+      const group = GROUPS.find((item) => item.pages.includes(page));
+      return { ...page, group: group ? group.name : "工作台" };
+    },
+    visiblePlatformMonitors() {
+      return this.pMonitorFilter === "all"
+        ? this.pmonitors
+        : this.pmonitors.filter((item) => item.platform === this.pMonitorFilter);
+    },
+    dashboard() {
+      const platformStats = Object.values(this.pStats.per_platform || {});
+      const runtime = this.stats.monitors_detail || [];
+      const platformRuntime = this.pStats.runtime || [];
+      const platformPaused = this.pmonitors.filter((item) => !item.active).length;
+      return {
+        targetsTotal:
+          (this.stats.monitors_total || 0) +
+          platformStats.reduce((sum, item) => sum + (item.monitors || 0), 0),
+        targetsActive:
+          (this.stats.monitors_active || 0) +
+          platformStats.reduce((sum, item) => sum + (item.active || 0), 0),
+        contentsTotal:
+          (this.stats.tweets_total || 0) +
+          platformStats.reduce((sum, item) => sum + (item.posts || 0), 0),
+        issues:
+          (this.stats.monitors_paused || 0) +
+          platformPaused +
+          (this.acc.stats?.inactive || 0) +
+          platformRuntime.filter((item) => item.consecutive_errors > 0).length,
+        totalPolls: runtime.reduce((sum, item) => sum + (item.total_polls || 0), 0),
+        totalNew: runtime.reduce((sum, item) => sum + (item.total_new || 0), 0),
+        runtimeErrors: runtime.reduce(
+          (sum, item) => sum + (item.consecutive_errors || 0),
+          0
+        ),
+      };
+    },
   },
   methods: {
     /* 格式化工具挂到 methods，模板里才能按 _ctx.fmtXxx(...) 解析 */
@@ -131,19 +194,36 @@ createApp({
     fmtDur,
     fmtNum,
     shortId,
+    go(route) {
+      location.hash = "#/" + route;
+    },
+    openDialog(name) {
+      const dialog = this.$refs[name];
+      if (dialog && !dialog.open) dialog.showModal();
+    },
+    closeDialog(name) {
+      const dialog = this.$refs[name];
+      if (dialog?.open) dialog.close();
+    },
+    askConfirm(message, action) {
+      this.confirmMessage = message;
+      this.confirmAction = action;
+      this.openDialog("confirmDialog");
+    },
+    cancelConfirm() {
+      this.confirmAction = null;
+      this.closeDialog("confirmDialog");
+    },
+    runConfirmed() {
+      const action = this.confirmAction;
+      this.cancelConfirm();
+      if (action) action();
+    },
     /* 视频时长毫秒 -> " 12s"（面板推文媒体用） */
     dur(ms) {
       if (!ms) return "";
       return " " + Math.round(ms / 1000) + "s";
     },
-    /* 创建人标记：admin:xx -> 管理员 xx；apikey:xx -> API xx */
-    creatorLabel(v) {
-      if (!v) return "-";
-      if (v.startsWith("admin:")) return "管理员 " + v.slice(6);
-      if (v.startsWith("apikey:")) return "API " + v.slice(7);
-      return v;
-    },
-
     /* ---- 通用请求：401 视为会话失效，回登录视图 ---- */
     async api(path, opts = {}) {
       const res = await fetch(path, {
@@ -201,7 +281,7 @@ createApp({
       } catch (e) {}
       this.authed = false;
       this.loginForm = { username: "", password: "" };
-      location.hash = "#/monitors";
+      location.hash = "#/overview";
     },
 
     /* ---- 监控管理 ---- */
@@ -226,6 +306,8 @@ createApp({
           }),
         });
         this.monForm.username = "";
+        this.closeDialog("monitorDialog");
+        this.notify("X 采集目标已添加", "success");
         await this.loadMonitors();
       } catch (e) {
         this.monError = e.message;
@@ -241,14 +323,20 @@ createApp({
         this.notify(e.message);
       }
     },
-    async removeMonitor(m) {
-      if (!confirm(`确认删除监控 @${m.username}（#${m.id}）？历史推文保留。`)) return;
-      try {
-        await this.api(`/monitors/${m.id}`, { method: "DELETE" });
-        await this.loadMonitors();
-      } catch (e) {
-        this.notify(e.message);
-      }
+    removeMonitor(m) {
+      this.askConfirm(`删除 @${m.username} 的采集目标？历史内容仍会保留。`, async () => {
+        try {
+          await this.api(`/monitors/${m.id}`, { method: "DELETE" });
+          this.notify("采集目标已删除", "success");
+          await this.loadMonitors();
+        } catch (e) {
+          this.notify(e.message);
+        }
+      });
+    },
+    openTweets(m) {
+      this.tweetMonId = m.id;
+      this.go("tweets");
     },
 
     /* ---- 推文浏览 ---- */
@@ -271,6 +359,10 @@ createApp({
     platName(p) {
       const f = this.platforms.find((x) => x.key === p);
       return f ? f.name : p;
+    },
+    platformMark(p) {
+      const platform = this.platforms.find((item) => item.key === p);
+      return platform ? platform.mark : "?";
     },
     pmOfPlat(p) {
       return this.pmonitors.filter((m) => m.platform === p);
@@ -367,6 +459,8 @@ createApp({
         });
         this.pmForm.creator_id = "";
         this.pmForm.label = "";
+        this.closeDialog("platformMonitorDialog");
+        this.notify("平台采集目标已添加", "success");
         await this.loadPlatformMonitors();
         await this.loadPlatformStats();
       } catch (e) {
@@ -383,19 +477,17 @@ createApp({
         this.notify(e.message);
       }
     },
-    async removePlatformMonitor(m) {
-      if (
-        !confirm(
-          `确认停止监控 ${this.platName(m.platform)} ${m.label}（#${m.id}）？历史内容保留。`
-        )
-      )
-        return;
-      try {
-        await this.api(`/platform/monitors/${m.id}`, { method: "DELETE" });
-        await this.loadPlatformMonitors();
-      } catch (e) {
-        this.notify(e.message);
-      }
+    removePlatformMonitor(m) {
+      this.askConfirm(`停止 ${this.platName(m.platform)}“${m.label}”的采集？历史内容仍会保留。`, async () => {
+        try {
+          await this.api(`/platform/monitors/${m.id}`, { method: "DELETE" });
+          this.notify("平台采集目标已停止", "success");
+          await this.loadPlatformMonitors();
+          await this.loadPlatformStats();
+        } catch (e) {
+          this.notify(e.message);
+        }
+      });
     },
     async triggerPlatformRun(p) {
       this.pMsg = "";
@@ -428,6 +520,11 @@ createApp({
       this.pMonId = list.length ? list[0].id : null;
       this.loadPlatformPosts();
     },
+    openPlatformPosts(m) {
+      this.pPlat = m.platform;
+      this.pMonId = m.id;
+      this.go("pposts");
+    },
 
     /* ---- 统计 / 账号 ---- */
     async loadStats() {
@@ -444,17 +541,19 @@ createApp({
         this.notify(e.message);
       }
     },
-    async removeAccount(a) {
-      if (!confirm(`确认删除采集账号 ${a.username}？`)) return;
-      try {
-        await this.api(
-          `/accounts/${encodeURIComponent(a.username)}`,
-          { method: "DELETE" }
-        );
-        await this.loadAccounts();
-      } catch (e) {
-        this.notify(e.message);
-      }
+    removeAccount(a) {
+      this.askConfirm(`删除 X 采集账号 ${a.username}？该账号的本机会话将不可恢复。`, async () => {
+        try {
+          await this.api(
+            `/accounts/${encodeURIComponent(a.username)}`,
+            { method: "DELETE" }
+          );
+          this.notify("X 采集账号已删除", "success");
+          await this.loadAccounts();
+        } catch (e) {
+          this.notify(e.message);
+        }
+      });
     },
     /* 可用性 = 已登录 且 未锁定（active） */
     avail(a) {
@@ -516,7 +615,7 @@ createApp({
           `/accounts/${encodeURIComponent(a.username)}/relogin`,
           { method: "POST" }
         );
-        if (r.logged_in) this.notify(`${a.username} 重新登录成功`);
+        if (r.logged_in) this.notify(`${a.username} 重新登录成功`, "success");
         else this.notify(`${a.username} 登录失败：${r.error_msg || "未知原因"}`);
         await this.loadAccounts();
       } catch (e) {
@@ -535,7 +634,8 @@ createApp({
     },
     refreshForRoute() {
       const r = this.route;
-      if (r === "monitors") this.loadMonitors();
+      if (r === "overview") this.refreshAll();
+      else if (r === "monitors") this.loadMonitors();
       else if (r === "tweets") {
         if (this.tweetMonId == null && this.monitors.length) {
           this.tweetMonId = this.monitors[0].id;
@@ -554,22 +654,34 @@ createApp({
       } else if (r === "stats") this.loadStats();
       else if (r === "accounts") this.loadAccounts();
     },
-    notify(msg) {
-      if (this.authed) alert(msg);
+    refreshCurrent() {
+      this.refreshForRoute();
+    },
+    notify(message, kind = "error") {
+      if (!this.authed) return;
+      window.clearTimeout(this.toastTimer);
+      this.toast = { message, kind };
+      this.toastTimer = window.setTimeout(() => {
+        this.toast = { message: "", kind: "" };
+      }, 3200);
     },
   },
   mounted() {
     this.initAuth();
     window.addEventListener("hashchange", () => {
       this.route = currentRoute();
+      document.title = `${this.activePage.title} · X-Crawler`;
       this.refreshForRoute();
     });
-    // 每 5s 刷新当前页数据；推文/账号/平台内容三个重页每 2 tick（10s）刷新一次
+    // 每 5s 刷新当前页数据；聚合总览和内容/账号重页每 10s 刷新一次。
     setInterval(() => {
       if (!this.authed) return;
       this.tick++;
       const r = this.route;
-      if ((r === "tweets" || r === "accounts" || r === "pposts") && this.tick % 2 !== 0)
+      if (
+        (r === "overview" || r === "tweets" || r === "accounts" || r === "pposts") &&
+        this.tick % 2 !== 0
+      )
         return;
       this.refreshForRoute();
     }, 5000);
