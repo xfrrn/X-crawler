@@ -40,11 +40,13 @@ class AutoUpIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.db = Database(str(Path(self.temporary.name) / "app.db"))
         await self.db.connect()
         self.previous_db = state.db
+        self.previous_wechat = state.wechat
         state.db = self.db
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
         state.db = self.previous_db
+        state.wechat = self.previous_wechat
         self.temporary.cleanup()
 
     def test_target_normalization_and_cursor(self) -> None:
@@ -59,6 +61,10 @@ class AutoUpIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             normalize_target("douyin", "https://www.douyin.com/user/MS4wLjABAAAA-id?from=web"),
             ("dy", "MS4wLjABAAAA-id"),
+        )
+        self.assertEqual(
+            normalize_target("wechat_official_account", "MzA1234567890=="),
+            ("wx", "MzA1234567890=="),
         )
         with self.assertRaises(ValueError):
             normalize_target("douyin", "https://evil.example/user/MS4wLjABAAAA-id")
@@ -152,6 +158,7 @@ class AutoUpIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "image_urls": '["https://example.com/image.jpg"]',
             "video_url": None,
             "cover_url": None,
+            "work_url": "https://www.douyin.com/video/post-1",
             "stats": '{"likes":1,"comments":2,"shares":3,"views":4}',
             "raw_json": '{"transport":1}',
         }
@@ -161,10 +168,40 @@ class AutoUpIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.db.upsert_platform_posts([post]), [])
         unchanged = (await self.db.query_autoup_changes("dy", monitor["id"], "", 0, 10))[0]
         self.assertEqual(unchanged["updated_at"], first["updated_at"])
+        post["work_url"] = "https://www.douyin.com/video/post-1-updated"
+        self.assertEqual(await self.db.upsert_platform_posts([post]), [])
+        work_url_changed = (await self.db.query_autoup_changes("dy", monitor["id"], "", 0, 10))[0]
+        self.assertEqual(work_url_changed["work_url"], post["work_url"])
+        self.assertGreaterEqual(work_url_changed["updated_at"], first["updated_at"])
         post["stats"] = '{"likes":9,"comments":2,"shares":3,"views":4}'
         self.assertEqual(await self.db.upsert_platform_posts([post]), [])
         changed = (await self.db.query_autoup_changes("dy", monitor["id"], "", 0, 10))[0]
         self.assertEqual(changed["stats"]["likes"], 9)
+
+    async def test_wechat_fakeid_is_shared_across_workspace_subscriptions(self) -> None:
+        class WechatStub:
+            async def resolve_target(self, _target: str) -> str:
+                return "MzA1234567890=="
+
+        state.wechat = WechatStub()
+        first = await put_subscription(
+            "00000000-0000-4000-8000-000000000021",
+            AutoUpSubscriptionPut(
+                platform="wechat_official_account", target="公众号名称", displayName="工作区一"
+            ),
+            creator="apikey_sha256:test",
+        )
+        second = await put_subscription(
+            "00000000-0000-4000-8000-000000000022",
+            AutoUpSubscriptionPut(
+                platform="wechat_official_account", target="MzA1234567890==", displayName="工作区二"
+            ),
+            creator="apikey_sha256:test",
+        )
+        self.assertEqual(first.source_target_id, second.source_target_id)
+        monitors = await self.db.list_platform_monitors("wx")
+        self.assertEqual(len(monitors), 1)
+        self.assertEqual(monitors[0]["creator_id"], "MzA1234567890==")
 
     async def test_subscription_routes_share_target_and_page_changes(self) -> None:
         first_id = "00000000-0000-4000-8000-000000000011"

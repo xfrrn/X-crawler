@@ -1,7 +1,7 @@
-"""平台轮询调度：每平台一个常驻循环，错峰 + 全局串行子进程 + 退避/自动暂停 + SSE 发布。
+"""平台轮询调度：每平台一个常驻循环，错峰 + 全局串行 + 退避/自动暂停 + SSE 发布。
 
-与 X 的 MonitorManager 不同：平台抓取是"按平台批量跑一个子进程"，不是逐监控高频轮询，
-因此节奏按平台配置（mc_poll_interval_*），不是按监控项。
+抖音/快手/小红书按平台批量跑 MediaCrawler 子进程，微信按平台批量请求后台接口；
+两者都复用现有运行态、手动触发与 SSE，轮询节奏按平台配置而不是按监控项。
 """
 import asyncio
 import logging
@@ -14,12 +14,14 @@ from typing import Any
 from ..config import Settings
 from ..db import Database
 from ..stream import SSEManager
-from .engine import PLATFORMS, MediaCrawlerEngine
+from .engine import PLATFORMS as MEDIA_PLATFORMS, MediaCrawlerEngine
+from ..wechat import WechatService
 
 logger = logging.getLogger(__name__)
 
-# 三平台启动错峰（秒）：避免同时起浏览器/占 CDP，也给风控留开窗
-STAGGER = {"xhs": 0, "dy": 600, "ks": 1200}
+# 四个平台启动错峰（秒）：避免同时占采集资源，也给风控留开窗
+PLATFORMS = (*MEDIA_PLATFORMS, "wx")
+STAGGER = {"xhs": 0, "wx": 300, "dy": 600, "ks": 1200}
 
 
 @dataclass
@@ -36,15 +38,16 @@ class PlatformScheduler:
         self,
         db: Database,
         engine: MediaCrawlerEngine,
+        wechat: WechatService,
         stream: SSEManager,
         settings: Settings,
     ):
         self._db = db
         self._engine = engine
+        self._wechat = wechat
         self._stream = stream
         self._settings = settings
-        # 全局串行锁：三平台共用，保证同一时刻只有一个子进程在跑，
-        # 避免 CDP 9222 端口争抢 + MediaCrawler 共享 sqlite 写冲突
+        # 全局串行锁：沿用三平台的单采集任务边界，避免 CDP 9222 端口争抢和共享 sqlite 写冲突。
         self._lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task] = {}
         self._runtime: dict[str, PlatformRuntime] = {}
@@ -59,23 +62,17 @@ class PlatformScheduler:
     # ---- 生命周期 ----
 
     async def start(self) -> None:
-        if not self._settings.mc_enabled:
-            logger.warning("[platform] MC_ENABLED=false，平台监控跳过")
-            return
-        if not os.path.isdir(self._settings.mc_repo_path):
+        media_ready = self._settings.mc_enabled and os.path.isdir(self._settings.mc_repo_path)
+        if self._settings.mc_enabled and not media_ready:
             logger.warning(
-                "[platform] MC_REPO_PATH 不存在，平台监控跳过: %s",
+                "[platform] MC_REPO_PATH 不存在，MediaCrawler 平台监控跳过: %s",
                 self._settings.mc_repo_path,
             )
-            return
         for platform in PLATFORMS:
+            if platform in MEDIA_PLATFORMS and not media_ready:
+                continue
             self._tasks[platform] = asyncio.create_task(self._platform_loop(platform))
-        logger.info(
-            "[platform] 平台监控已启动（xhs/dy/ks），间隔=%s/%s/%s 秒",
-            self._settings.mc_poll_interval("xhs"),
-            self._settings.mc_poll_interval("dy"),
-            self._settings.mc_poll_interval("ks"),
-        )
+        logger.info("[platform] 平台监控已启动: %s", "/".join(self._tasks))
 
     async def stop(self) -> None:
         for task in self._tasks.values():
@@ -88,7 +85,11 @@ class PlatformScheduler:
     # ---- 轮询循环 ----
 
     async def _platform_loop(self, platform: str) -> None:
-        base = self._settings.mc_poll_interval(platform)
+        base = (
+            self._settings.wechat_poll_interval
+            if platform == "wx"
+            else self._settings.mc_poll_interval(platform)
+        )
         # 启动错峰 + 随机 jitter
         await self._sleep(STAGGER.get(platform, 0) + random.uniform(0, self._settings.jitter_factor * base))
         while True:
@@ -112,10 +113,14 @@ class PlatformScheduler:
         start = time.monotonic()
         try:
             async with self._lock:
-                result = await self._engine.run_platform(platform, active)
+                # ponytail: 共用现有全局锁；平台量明显增加时再拆成浏览器锁和 HTTP 锁。
+                if platform == "wx":
+                    new_posts = await self._wechat.collect(active)
+                else:
+                    new_posts = (await self._engine.run_platform(platform, active)).new_posts
             for m in active:
                 await self._db.mark_platform_poll(m["id"], None)
-            for post in result.new_posts:
+            for post in new_posts:
                 rt.total_new += 1
                 self._stream.publish(
                     {
@@ -164,7 +169,11 @@ class PlatformScheduler:
     # ---- 手动触发 / 状态 ----
 
     async def trigger_platform(self, platform: str) -> dict[str, Any]:
-        if not self._settings.mc_enabled or not os.path.isdir(self._settings.mc_repo_path):
+        if platform not in PLATFORMS:
+            raise ValueError(f"未知平台: {platform}")
+        if platform in MEDIA_PLATFORMS and (
+            not self._settings.mc_enabled or not os.path.isdir(self._settings.mc_repo_path)
+        ):
             raise ValueError("MediaCrawler 未启用或目录不存在")
         active = [m for m in await self._db.list_platform_monitors(platform) if m["active"]]
         if not active:

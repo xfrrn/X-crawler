@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     mc_headless: bool = False
     mc_subprocess_timeout: int = 900  # 单次子进程硬超时（秒）
 
+    # ---- 微信公众号后台 API ----
+    wechat_poll_interval: int = 1800
+    wechat_max_articles: int = 15
+
     @property
     def api_key_list(self) -> list[str]:
         return [k.strip() for k in self.api_keys.split(",") if k.strip()]

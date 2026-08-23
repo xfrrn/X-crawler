@@ -18,6 +18,7 @@ from ..schemas import (
     AutoUpTargetOut,
 )
 from ..state import state
+from ..wechat import WechatAuthError, WechatError, WechatTargetError, is_fake_id
 
 router = APIRouter(
     prefix="/integrations/autoup",
@@ -30,6 +31,7 @@ _PLATFORM_TO_SOURCE = {
     "douyin": "dy",
     "kuaishou": "ks",
     "xiaohongshu": "xhs",
+    "wechat_official_account": "wx",
 }
 _SOURCE_TO_PLATFORM = {value: key for key, value in _PLATFORM_TO_SOURCE.items()}
 _PROFILE_PATTERNS = {
@@ -78,6 +80,11 @@ def normalize_target(platform: str, target: str) -> tuple[str, str]:
         value = value.lstrip("@").lower()
         if not _X_USERNAME.fullmatch(value):
             raise ValueError("X 用户名格式无效")
+        return source, value
+
+    if source == "wx":
+        if not is_fake_id(value):
+            raise ValueError("微信公众号采集目标必须是 fakeid")
         return source, value
 
     if "://" in value:
@@ -190,10 +197,23 @@ async def put_subscription(
     creator: str = Depends(require_api_key),
 ) -> AutoUpTargetOut:
     competitor_id = _competitor_id(competitor_id)
-    try:
-        source, canonical_key = normalize_target(payload.platform, payload.target)
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    if payload.platform == "wechat_official_account":
+        if state.wechat is None:
+            raise HTTPException(status_code=503, detail="微信公众号采集器尚未初始化")
+        try:
+            canonical_key = await state.wechat.resolve_target(payload.target)
+        except WechatTargetError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except WechatAuthError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except WechatError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        source = "wx"
+    else:
+        try:
+            source, canonical_key = normalize_target(payload.platform, payload.target)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
     db = state.db
     assert db is not None
 
@@ -221,7 +241,10 @@ async def put_subscription(
                 else:
                     try:
                         monitor = await db.create_platform_monitor(
-                            source, payload.target.strip(), payload.display_name, created_by=creator
+                            source,
+                            canonical_key if source == "wx" else payload.target.strip(),
+                            payload.display_name,
+                            created_by=creator,
                         )
                     except IntegrityError as error:
                         raise HTTPException(status_code=409, detail="采集目标已存在") from error

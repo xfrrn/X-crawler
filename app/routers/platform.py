@@ -6,12 +6,13 @@ from ..deps import require_api_key
 from ..platform.engine import MediaCrawlerError
 from ..schemas import PlatformMonitorCreate, PlatformMonitorOut, PlatformPostOut
 from ..state import state
+from ..wechat import WechatAuthError, WechatError, WechatTargetError
 
 router = APIRouter(
     prefix="/platform", tags=["platform"], dependencies=[Depends(require_api_key)]
 )
 
-_PLATFORMS = ("xhs", "dy", "ks")
+_PLATFORMS = ("xhs", "dy", "ks", "wx")
 
 
 @router.post("/monitors", response_model=PlatformMonitorOut, status_code=201)
@@ -19,9 +20,21 @@ async def create_platform_monitor(
     payload: PlatformMonitorCreate,
     creator: str = Depends(require_api_key),
 ) -> PlatformMonitorOut:
+    creator_id = payload.creator_id
+    if payload.platform == "wx":
+        if state.wechat is None:
+            raise HTTPException(status_code=503, detail="微信公众号采集器尚未初始化")
+        try:
+            creator_id = await state.wechat.resolve_target(creator_id)
+        except WechatTargetError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except WechatAuthError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except WechatError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
     try:
         monitor = await state.db.create_platform_monitor(
-            payload.platform, payload.creator_id, payload.label, created_by=creator
+            payload.platform, creator_id, payload.label, created_by=creator
         )
     except IntegrityError:
         raise HTTPException(status_code=409, detail="该平台下已存在相同 creator_id 的监控")
@@ -119,7 +132,7 @@ async def run_platform_now(platform: str) -> dict:
         raise HTTPException(status_code=400, detail=f"未知平台: {platform}")
     scheduler = state.platform_scheduler
     if scheduler is None:
-        raise HTTPException(status_code=503, detail="平台调度未初始化（检查 MC_ENABLED / MC_REPO_PATH）")
+        raise HTTPException(status_code=503, detail="平台调度未初始化")
     try:
         return await scheduler.trigger_platform(platform)
     except ValueError as e:

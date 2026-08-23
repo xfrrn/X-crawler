@@ -1,6 +1,6 @@
 # X-Crawler
 
-X、抖音、快手和小红书账号采集服务：管理真实采集目标与源历史，同时为 AutoUp Cloud 提供共享目标订阅和增量 change feed。现有管理面板、REST 与 SSE 接口保持兼容。
+X、抖音、快手、小红书和微信公众号账号采集服务：管理真实采集目标与源历史，同时为 AutoUp Cloud 提供共享目标订阅和增量 change feed。现有管理面板、REST 与 SSE 接口保持兼容。
 
 ## 技术栈
 
@@ -20,7 +20,7 @@ git clone --recurse-submodules <本仓库地址>
 git submodule update --init --recursive
 ```
 
-克隆后首次 `uv sync`（装主项目依赖，含 twscrape），再启动服务即可；MediaCrawler 的初始化
+克隆后首次 `uv sync`（装主项目依赖，含 twscrape 和 Playwright），再启动服务即可；MediaCrawler 的初始化
 （`uv sync` + 应用补丁 + 装 Playwright 浏览器）会在**服务首次启动时自动完成**，无需手动进它目录操作。
 
 ## 快速开始
@@ -64,7 +64,7 @@ curl -X DELETE http://localhost:8000/monitors/1 -H "Authorization: Bearer dev-ke
 浏览器打开 `http://localhost:8000/` 即可进入后台面板（无需 Node/前端构建，纯静态 SPA）。
 
 - 独立后台登录：`ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录后下发服务端 session cookie，**不在浏览器存 API Key**
-- 四个页面：监控管理（增删/恢复）、推文浏览（**图片/视频/GIF 直接预览**，点击看原图）、统计看板、采集账号管理（面板内直接添加账号并自动登录，实时显示可用性，可重新登录/删除）
+- 管理页覆盖 X 监控/推文/采集账号、中文平台监控/内容和统计；平台监控页还提供微信公众号扫码登录、二维码与会话状态
 - 面板登录后即可调用全部数据接口；外部调用方仍用 `Authorization: Bearer <API_KEY>`，两种鉴权互不影响
 
 首次使用先在 `.env` 设置后台密码并改掉默认值：
@@ -102,9 +102,9 @@ TWS_PROXY=http://127.0.0.1:7890     # 或 socks5://127.0.0.1:1080
 
 优先级：单账号 `--proxy`（仅密码登录可配）> `TWS_PROXY` 全局 > 无代理。
 
-## 多平台监控（抖音 / 快手 / 小红书）
+## 多平台监控（抖音 / 快手 / 小红书 / 微信公众号）
 
-X 之外，本服务也能以**子进程**方式驱动外部 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 监控三大中文内容平台创作者的**最新动态**。每条动态入库去重 + 更新，像 X 推文一样供面板/REST 主动拉取，不推送。
+抖音、快手和小红书由外部 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 子进程采集；微信公众号由主进程 Playwright Chromium 维护单一后台扫码会话。两条链路都把最新内容写入同一平台监控、作品和增量 change feed。
 
 ### 前置条件
 
@@ -161,10 +161,16 @@ CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
 - 三平台各自一个轮询循环，间隔默认 1800s（`MC_POLL_INTERVAL_*`），启动错峰 0/10/20 分钟；同一时刻只跑一个子进程（全局串行，避免 CDP 9222 端口冲突与共享 sqlite 写冲突）。
 - **去重 + 更新**：入库按 `(platform, content_id)` 去重；已存在的动态只刷新内容/点赞数等数据，仅新动态才写入并触发 SSE `platform_post` 事件。
 
+### 微信公众号扫码与采集
+
+在管理面板的“平台监控”页点击扫码登录；登录任务全局唯一、180 秒超时，重复点击复用当前任务。新登录成功前不会覆盖旧会话。会话原子写入 `DATA_DIR/wechat-session.json`，尽力限制为当前本机运行账户可读；状态接口、API 和日志不返回 Token、Cookie 或 UA。
+
+公众号目标可填写精确名称或 `fakeid`。名称搜索只接受唯一的精确昵称匹配，未找到或重名时必须改填 `fakeid`。每轮只读取 `searchbiz` 与 `appmsgpublish`，保存最新 15 篇的标题、摘要、封面、发布时间和 `mp.weixin.qq.com` 原文链接；不下载正文、不生成阅读/点赞指标。微信使用独立轮询配置，即使 `MC_ENABLED=false` 仍会运行。
+
 ### 面板 / API
 
 - 面板新增两个页：**平台监控**（添加监控、列表、每平台「立即抓取」）与**平台内容**（按平台/博主浏览动态，图片/视频预览，每 10s 自动刷新）。
-- 小红书 `creator_id` 填**带 xsec_token 的完整主页 URL**；抖音/快手可填主页 URL 或裸 ID。
+- 小红书 `creator_id` 填**带 xsec_token 的完整主页 URL**；抖音/快手可填主页 URL 或裸 ID；微信公众号填精确名称或 `fakeid`。
 - ⚠️ MediaCrawler "教学版"落库前会**匿名化**博主身份：库里只有 `creator_hash = sha256(原始id)[:16]`，没有真实昵称/头像。因此归属靠"复算 hash 匹配"完成，**添加监控时 `label`（展示名）必填**，否则列表里无法辨认是谁。
 - 相关接口见下表 `/platform/*` 与 SSE 事件 `platform_post`。
 
@@ -174,7 +180,7 @@ CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
 
 ### AutoUp 集成接口
 
-集成接口不改变现有管理面板 API。AutoUp 平台标识为 `x / douyin / kuaishou / xiaohongshu`，服务内部映射为 `x / dy / ks / xhs`：
+集成接口不改变现有管理面板 API。AutoUp 平台标识为 `x / douyin / kuaishou / xiaohongshu / wechat_official_account`，服务内部映射为 `x / dy / ks / xhs / wx`：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -183,7 +189,7 @@ CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
 | DELETE | `/integrations/autoup/subscriptions/{competitorId}` | 幂等删除订阅；最后一个有效订阅删除后才停底层目标，历史保留 |
 | GET | `/integrations/autoup/targets/{sourceTargetId}/changes?cursor=&limit=200` | 空游标分页返回已有历史，之后只返回新增或映射字段变化的数据 |
 
-X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳定创作者 ID。同目标只有一份采集历史，不同 AutoUp workspace 通过各自 competitor UUID 订阅。每个新目标抓最近 15 条；中文平台创建后异步唤醒对应调度器，调用方不等待浏览器采集。
+X 用户名忽略 `@` 和大小写；抖音、快手和小红书从官方主页路径提取稳定创作者 ID，微信公众号统一落为 `fakeid`。同目标只有一份采集历史，不同 AutoUp workspace 通过各自 competitor UUID 订阅。每个新目标抓最近 15 条；中文平台创建后异步唤醒对应调度器，调用方不等待浏览器采集。
 
 小红书含 `xsec_token` 的完整定位链接只保存在本服务的 monitor 表，change feed 和响应不会返回该 Token。API Key 创建人只保存 `apikey_sha256:<12位指纹>`；启动时会把旧版 `apikey:<明文>` 标记原位改为 `[redacted]`。
 
@@ -201,7 +207,7 @@ X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳�
 | POST | `/accounts/cookies` | cookies 导入添加采集账号（含 `auth_token` 和 `ct0`，仅后台 session） |
 | POST | `/accounts/{username}/relogin` | 强制重新登录采集账号并返回状态（仅后台 session） |
 | DELETE | `/accounts/{username}` | 删除采集账号（仅后台 session 可用） |
-| GET | `/platform/monitors` | 平台监控列表（`?platform=xhs|dy|ks` 过滤） |
+| GET | `/platform/monitors` | 平台监控列表（`?platform=xhs|dy|ks|wx` 过滤） |
 | POST | `/platform/monitors` | 添加平台监控，body `{platform, creator_id, label}`；`label` 必填（昵称已脱敏） |
 | GET | `/platform/monitors/{id}` | 平台监控详情 |
 | DELETE | `/platform/monitors/{id}` | 停止平台监控（软删，历史动态保留） |
@@ -214,6 +220,9 @@ X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳�
 | POST | `/admin/login` | 后台登录，body `{username, password}`，下发 session cookie |
 | POST | `/admin/logout` | 登出 |
 | GET | `/admin/me` | 当前登录态（SPA 启动探测用） |
+| GET | `/admin/wechat/session` | 微信后台会话状态，不包含任何凭据（仅后台 session） |
+| POST | `/admin/wechat/login` | 发起或复用 180 秒扫码登录任务（仅后台 session） |
+| GET | `/admin/wechat/login/qr` | 当前登录任务二维码 PNG（仅后台 session） |
 
 ### 自适应轮询
 
@@ -254,6 +263,8 @@ X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳�
 | `MC_MAX_POSTS_PER_CREATOR` | `15` | 每博主每轮抓取的最新动态条数上限（三平台统一） |
 | `MC_HEADLESS` | `false` | 子进程浏览器无头模式 |
 | `MC_SUBPROCESS_TIMEOUT` | `900` | 单次抓取子进程硬超时（秒） |
+| `WECHAT_POLL_INTERVAL` | `1800` | 微信公众号轮询间隔（秒），不受 `MC_ENABLED` 控制 |
+| `WECHAT_MAX_ARTICLES` | `15` | 每个公众号每轮保存的最新文章数 |
 
 ## 数据去重
 
@@ -265,10 +276,11 @@ X 用户名忽略 `@` 和大小写；中文平台从官方主页路径提取稳�
 uv run python -m unittest discover -s tests
 ```
 
-测试使用标准库 `unittest`，覆盖目标规范化、游标、共享订阅、数据级更新时间和 API Key 指纹，不引入额外测试框架。
+测试使用标准库 `unittest`，覆盖目标规范化、游标、共享订阅、数据级更新时间、API Key 指纹、微信精确匹配、嵌套文章解析、URL 边界、会话脱敏和 SQLite 迁移，不引入额外测试框架。
 
 ## 已知限制
 
 - 目标只保留服务已采集到的历史；每次实际平台抓取仍限制最近 15 条，不做平台全量回溯。
-- 中文平台依赖本地 MediaCrawler 与浏览器登录态；禁用或目录缺失时可继续读取既有历史，但异步唤醒不会启动采集。
+- 抖音、快手和小红书依赖本地 MediaCrawler 与浏览器登录态；禁用或目录缺失时可继续读取既有历史，但异步唤醒不会启动这三种采集。
+- 微信公众号依赖一个具有搜索公众号和读取历史文章权限的后台扫码会话；会话失效后需在管理面板重新扫码。首版仅同步文章元数据和原文链接。
 - change feed 是 Cloud 轮询接口，不提供 AutoUp 专用 SSE/WebSocket。

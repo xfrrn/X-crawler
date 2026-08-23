@@ -16,6 +16,7 @@ class AppState:
     manager: MonitorManager | None = None
     platform_engine: "MediaCrawlerEngine | None" = None
     platform_scheduler: "PlatformScheduler | None" = None
+    wechat: "WechatService | None" = None
     started_at: datetime | None = None
     _bag: dict[str, Any] = field(default_factory=dict)
 
