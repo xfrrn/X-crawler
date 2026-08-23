@@ -52,8 +52,10 @@ class Settings(BaseSettings):
     # ---- ngrok 公网隧道（官方 Python SDK，可选）----
     # 填入 ngrok authtoken（https://dashboard.ngrok.com 注册后获取）才启用隧道，
     # 留空则不启动。NGROK_DOMAIN 填已保留的固定域名（免费档无，可留空用随机 URL）。
-    ngrok_auth_token: str = ""
-    ngrok_domain: str = ""
+    # 显式 validation_alias：pydantic-settings 2.15.0 对 ngrok_auth_token 自动推导
+    # NGROK_AUTHTOKEN 会失败（读成空），这里强制指定环境变量名。
+    ngrok_auth_token: str = Field(default="", validation_alias="NGROK_AUTHTOKEN")
+    ngrok_domain: str = Field(default="", validation_alias="NGROK_DOMAIN")
     app_port: int = 8000  # 隧道转发的本地端口，需与 uvicorn 监听端口一致
 
     # ---- 微信公众号后台 API ----
