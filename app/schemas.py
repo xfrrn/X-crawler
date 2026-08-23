@@ -2,8 +2,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Platform = Literal["xhs", "dy", "ks"]
-AutoUpPlatform = Literal["x", "douyin", "kuaishou", "xiaohongshu"]
+Platform = Literal["xhs", "dy", "ks", "wx"]
+AutoUpPlatform = Literal[
+    "x", "douyin", "kuaishou", "xiaohongshu", "wechat_official_account"
+]
 
 
 class MonitorCreate(BaseModel):
@@ -62,7 +64,7 @@ class TweetOut(BaseModel):
 
 
 class PlatformMonitorCreate(BaseModel):
-    """抖音/快手/小红书监控项。label 必填：MediaCrawler 教学版会把博主昵称脱敏，面板用 label 展示。"""
+    """中文平台监控项。label 是面板和工作空间内使用的展示名。"""
 
     platform: Platform
     creator_id: str = Field(min_length=1, max_length=512)
@@ -96,6 +98,7 @@ class PlatformPostOut(BaseModel):
     image_urls: list[str] | None
     video_url: str | None
     cover_url: str | None
+    work_url: str | None
     stats: dict | None
     inserted_at: str
 

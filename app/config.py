@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     ngrok_domain: str = ""
     app_port: int = 8000  # 隧道转发的本地端口，需与 uvicorn 监听端口一致
 
+    # ---- 微信公众号后台 API ----
+    wechat_poll_interval: int = 1800
+    wechat_max_articles: int = 15
+
     @property
     def api_key_list(self) -> list[str]:
         return [k.strip() for k in self.api_keys.split(",") if k.strip()]

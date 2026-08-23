@@ -1,10 +1,11 @@
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
 from ..config import Settings, get_settings
 from ..deps import require_admin
+from ..state import state
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -45,3 +46,27 @@ async def logout(request: Request) -> dict:
 async def me(request: Request) -> dict:
     """返回当前登录态，SPA 启动时用它探测是否已登录。"""
     return {"admin": True, "username": request.session.get("username", "")}
+
+
+@router.get("/wechat/session", dependencies=[Depends(require_admin)])
+async def wechat_session() -> dict:
+    if state.wechat is None:
+        raise HTTPException(status_code=503, detail="微信公众号采集器尚未初始化")
+    return state.wechat.session_status()
+
+
+@router.post("/wechat/login", dependencies=[Depends(require_admin)])
+async def wechat_login() -> dict:
+    if state.wechat is None:
+        raise HTTPException(status_code=503, detail="微信公众号采集器尚未初始化")
+    return await state.wechat.start_login()
+
+
+@router.get("/wechat/login/qr", dependencies=[Depends(require_admin)])
+async def wechat_login_qr() -> Response:
+    if state.wechat is None:
+        raise HTTPException(status_code=503, detail="微信公众号采集器尚未初始化")
+    qr = state.wechat.qr_png()
+    if qr is None:
+        raise HTTPException(status_code=404, detail="登录二维码尚未就绪")
+    return Response(content=qr, media_type="image/png", headers={"Cache-Control": "no-store"})

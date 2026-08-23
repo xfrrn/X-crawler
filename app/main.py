@@ -16,12 +16,13 @@ from .db import Database
 from .manager import MonitorManager
 from .ngrok_tunnel import NgrokTunnel
 from .platform.engine import MediaCrawlerEngine
-from .platform.init import ensure_mediacrawler_ready
+from .platform.init import ensure_mediacrawler_ready, ensure_playwright_ready
 from .platform.scheduler import PlatformScheduler
 from .routers import accounts, admin, autoup, monitors, platform, stream, system, tweets
 from .scraper import create_scraper
 from .state import state
 from .stream import SSEManager
+from .wechat import WechatService
 
 
 @asynccontextmanager
@@ -35,7 +36,8 @@ async def lifespan(app: FastAPI):
     stream_bus = SSEManager(replay_size=settings.sse_replay_size)
     manager = MonitorManager(db, scraper, stream_bus, settings)
     platform_engine = MediaCrawlerEngine(settings, db)
-    platform_scheduler = PlatformScheduler(db, platform_engine, stream_bus, settings)
+    wechat = WechatService(settings, db)
+    platform_scheduler = PlatformScheduler(db, platform_engine, wechat, stream_bus, settings)
     ngrok_tunnel = NgrokTunnel(
         settings.ngrok_auth_token, settings.app_port, settings.ngrok_domain
     )
@@ -47,10 +49,12 @@ async def lifespan(app: FastAPI):
     state.platform_engine = platform_engine
     state.platform_scheduler = platform_scheduler
     state.ngrok_tunnel = ngrok_tunnel
+    state.wechat = wechat
     state.started_at = datetime.now(timezone.utc)
 
     await manager.start()
-    # 首次启动初始化 MediaCrawler（uv sync + 应用补丁 + 装浏览器），之后幂等快路径
+    # Playwright 同时供微信扫码和 MediaCrawler 使用；初始化失败不阻塞 API 启动。
+    await ensure_playwright_ready()
     await ensure_mediacrawler_ready(settings)
     await platform_scheduler.start()
     # 可选 ngrok 公网隧道：凭据留空跳过，失败不阻断服务
@@ -60,6 +64,7 @@ async def lifespan(app: FastAPI):
     finally:
         await ngrok_tunnel.stop()
         await platform_scheduler.stop()
+        await wechat.close()
         await manager.stop()
         await db.close()
 

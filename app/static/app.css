@@ -265,6 +265,9 @@ td.ops { white-space: nowrap; }
 
 /* ---- 「立即抓取」平台下拉 + 按钮 组合 ---- */
 .run-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wechat-qr { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
+.wechat-qr img { width: 220px; height: 220px; background: #fff; border-radius: 8px; }
+.wechat-qr p { color: var(--muted); }
 
 /* ---- 表格横向滚动容器（窄屏兜底）---- */
 .tbl-scroll { overflow-x: auto; }

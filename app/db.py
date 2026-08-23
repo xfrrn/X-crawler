@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS platform_posts (
     image_urls TEXT,
     video_url TEXT,
     cover_url TEXT,
+    work_url TEXT,
     stats TEXT,
     raw_json TEXT,
     inserted_at TEXT NOT NULL,
@@ -249,6 +250,9 @@ class Database:
             await self._conn.execute(
                 "UPDATE platform_posts SET updated_at = inserted_at WHERE updated_at IS NULL"
             )
+            await self._conn.commit()
+        if "work_url" not in pcols:
+            await self._conn.execute("ALTER TABLE platform_posts ADD COLUMN work_url TEXT")
             await self._conn.commit()
         subscription_columns = {
             row[1]
@@ -520,12 +524,12 @@ class Database:
             values = (
                 p.get("monitor_id"), p.get("creator_hash"), p.get("title"),
                 p.get("content"), p.get("created_at"), p.get("image_urls"),
-                p.get("video_url"), p.get("cover_url"), p.get("stats"),
+                p.get("video_url"), p.get("cover_url"), p.get("work_url"), p.get("stats"),
                 p.get("raw_json"),
             )
             tracked_columns = (
                 "monitor_id", "creator_hash", "title", "content", "created_at",
-                "image_urls", "video_url", "cover_url", "stats",
+                "image_urls", "video_url", "cover_url", "work_url", "stats",
             )
             if current is not None:
                 if any(
@@ -536,7 +540,7 @@ class Database:
                     """
                     UPDATE platform_posts
                     SET monitor_id = ?, creator_hash = ?, title = ?, content = ?, created_at = ?,
-                        image_urls = ?, video_url = ?, cover_url = ?, stats = ?, raw_json = ?,
+                        image_urls = ?, video_url = ?, cover_url = ?, work_url = ?, stats = ?, raw_json = ?,
                         updated_at = ?
                     WHERE platform = ? AND content_id = ?
                     """,
@@ -548,9 +552,9 @@ class Database:
                     """
                     INSERT INTO platform_posts
                         (platform, monitor_id, content_id, creator_hash, title, content,
-                         created_at, image_urls, video_url, cover_url, stats, raw_json,
+                         created_at, image_urls, video_url, cover_url, work_url, stats, raw_json,
                          inserted_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         platform,
@@ -563,6 +567,7 @@ class Database:
                         p.get("image_urls"),
                         p.get("video_url"),
                         p.get("cover_url"),
+                        p.get("work_url"),
                         p.get("stats"),
                         p.get("raw_json"),
                         ts,

@@ -1,7 +1,7 @@
-"""MediaCrawler 子模块一键初始化（幂等，lifespan 启动时调用）。
+"""MediaCrawler 子模块与主项目 Playwright 的幂等初始化。
 
-首次启动依次做三件事：uv sync 建 venv → 应用 dy/ks 补丁（整文件复制）→ 装 Playwright Chromium。
-之后每次启动都有快路径（.venv 存在 / 文件 sha256 一致 / 浏览器已装）直接跳过，毫秒级。
+MediaCrawler 初始化负责 uv sync 和应用补丁；主项目 Playwright 单独确保 Chromium 可用，
+同时服务微信扫码和 MediaCrawler。之后每次启动都有快路径直接跳过。
 任何一步失败只记 error 不抛，保证主项目照常启动（抓取失败由各监控 last_error 呈现）。
 """
 import asyncio
@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from ..config import Settings
@@ -80,20 +81,6 @@ async def _run(
     return proc.returncode, (proc.stdout or b"").decode("utf-8", errors="replace")
 
 
-def _chromium_installed() -> bool:
-    """Playwright 的 Chromium 是否已装（查浏览器缓存目录，尊重 PLAYWRIGHT_BROWSERS_PATH）。"""
-    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-    if env_path:
-        base = Path(env_path)
-    elif os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ms-playwright"
-    else:
-        base = Path.home() / ".cache" / "ms-playwright"
-    if not base.is_dir():
-        return False
-    return any(p.name.startswith("chromium") for p in base.iterdir() if p.is_dir())
-
-
 async def ensure_mediacrawler_ready(settings: Settings) -> None:
     if not settings.mc_enabled:
         logger.warning("[platform-init] MC_ENABLED=false，跳过 MediaCrawler 初始化")
@@ -127,12 +114,22 @@ async def ensure_mediacrawler_ready(settings: Settings) -> None:
         shutil.copy2(src, dst)
         logger.info("[platform-init] 已应用补丁: %s", rel)
 
-    # 3) Playwright Chromium（国内直连 Playwright CDN 常被墙，走 npmmirror 镜像）
-    if not _chromium_installed():
+    logger.info("[platform-init] MediaCrawler 就绪: %s", repo)
+
+
+async def ensure_playwright_ready() -> None:
+    """确保主项目 Playwright 可启动 Chromium；失败只影响需要浏览器的采集。"""
+    try:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            if Path(playwright.chromium.executable_path).is_file():
+                logger.info("[platform-init] Chromium 已装（跳过）")
+                return
         logger.info("[platform-init] 安装 Playwright Chromium（npmmirror 镜像）…")
         code, tail = await _run(
-            ["uv", "run", "playwright", "install", "chromium"],
-            repo,
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            Path.cwd(),
             _SYNC_TIMEOUT,
             extra_env={
                 "PLAYWRIGHT_DOWNLOAD_HOST": "https://npmmirror.com/mirrors/playwright",
@@ -145,7 +142,5 @@ async def ensure_mediacrawler_ready(settings: Settings) -> None:
             )
         else:
             logger.info("[platform-init] Chromium 就绪")
-    else:
-        logger.info("[platform-init] Chromium 已装（跳过）")
-
-    logger.info("[platform-init] MediaCrawler 就绪: %s", repo)
+    except Exception:
+        logger.error("[platform-init] Playwright Chromium 初始化失败，其他采集器继续运行")

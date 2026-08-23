@@ -1,7 +1,7 @@
 /* X-Crawler 管理面板 SPA（无构建，直接加载 vue.global.prod.js） */
 const { createApp } = Vue;
 
-/* 左侧导航：X（推特）与多平台（抖音/快手/小红书）两组分开 */
+/* 左侧导航：X（推特）与多平台两组分开 */
 const GROUPS = [
   {
     name: "X · 推特",
@@ -13,7 +13,7 @@ const GROUPS = [
     ],
   },
   {
-    name: "抖音 / 快手 / 小红书",
+    name: "中文内容平台",
     pages: [
       { key: "pmonitors", path: "#/pmonitors", label: "平台监控" },
       { key: "pposts", path: "#/pposts", label: "平台内容" },
@@ -93,6 +93,7 @@ createApp({
         { key: "xhs", name: "小红书" },
         { key: "dy", name: "抖音" },
         { key: "ks", name: "快手" },
+        { key: "wx", name: "微信公众号" },
       ],
       pmonitors: [],
       pmForm: { platform: "xhs", creator_id: "", label: "" },
@@ -101,6 +102,9 @@ createApp({
       pMsg: "",
       pMsgOk: false,
       pStats: {},
+      wechatSession: { status: "missing", qrReady: false },
+      wechatBusy: false,
+      wechatQrUrl: "",
       // 「立即抓取」默认平台（平台监控列表卡片头的下拉）
       runPlat: "xhs",
       // 平台内容
@@ -312,11 +316,42 @@ createApp({
         this.notify(e.message);
       }
     },
+    async loadWechatSession() {
+      try {
+        this.wechatSession = await this.api("/admin/wechat/session");
+        this.wechatQrUrl = this.wechatSession.qrReady
+          ? `/admin/wechat/login/qr?_=${Date.now()}`
+          : "";
+      } catch (e) {
+        this.notify(e.message);
+      }
+    },
+    wechatStatusLabel() {
+      return {
+        missing: "未登录",
+        starting: "正在生成二维码",
+        waiting_scan: "等待扫码",
+        ready: "已登录",
+        expired: "登录态已失效",
+        error: "登录失败",
+      }[this.wechatSession.status] || this.wechatSession.status;
+    },
+    async startWechatLogin() {
+      this.wechatBusy = true;
+      try {
+        this.wechatSession = await this.api("/admin/wechat/login", { method: "POST" });
+        window.setTimeout(() => this.loadWechatSession(), 500);
+      } catch (e) {
+        this.notify(e.message);
+      } finally {
+        this.wechatBusy = false;
+      }
+    },
     async addPlatformMonitor() {
       const creator_id = this.pmForm.creator_id.trim();
       const label = this.pmForm.label.trim();
       if (!creator_id || !label) {
-        this.pmError = "博主链接/ID 和展示名都要填";
+        this.pmError = "创作者链接/ID/公众号名称和展示名都要填";
         return;
       }
       this.pmAdding = true;
@@ -496,6 +531,7 @@ createApp({
       this.loadAccounts();
       this.loadPlatformMonitors();
       this.loadPlatformStats();
+      this.loadWechatSession();
     },
     refreshForRoute() {
       const r = this.route;
@@ -508,6 +544,7 @@ createApp({
       } else if (r === "pmonitors") {
         this.loadPlatformMonitors();
         this.loadPlatformStats();
+        this.loadWechatSession();
       } else if (r === "pposts") {
         if (this.pMonId == null) {
           const list = this.pmOfPlat(this.pPlat);
