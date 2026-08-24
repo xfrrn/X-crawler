@@ -231,6 +231,7 @@ class WechatService:
                     await page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
                     qr = page.locator(_QR_SELECTOR).first
                     await qr.wait_for(state="visible", timeout=20_000)
+                    await qr.evaluate("image => image.decode()", timeout=30_000)
                     qr_png = await qr.screenshot(type="png")
                     if len(qr_png) < 400:
                         raise RuntimeError("invalid qr")

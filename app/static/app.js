@@ -432,7 +432,10 @@ createApp({
       this.wechatBusy = true;
       try {
         this.wechatSession = await this.api("/admin/wechat/login", { method: "POST" });
-        window.setTimeout(() => this.loadWechatSession(), 500);
+        while (this.authed && this.wechatSession.status === "starting") {
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+          await this.loadWechatSession();
+        }
       } catch (e) {
         this.notify(e.message);
       } finally {
@@ -652,7 +655,10 @@ createApp({
         }
         this.loadPlatformPosts();
       } else if (r === "stats") this.loadStats();
-      else if (r === "accounts") this.loadAccounts();
+      else if (r === "accounts") {
+        this.loadAccounts();
+        this.loadWechatSession();
+      }
     },
     refreshCurrent() {
       this.refreshForRoute();
