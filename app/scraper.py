@@ -39,6 +39,8 @@ class Scraper(Protocol):
 
     async def delete_account(self, username: str) -> bool: ...
 
+    async def set_account_active(self, username: str, active: bool) -> dict: ...
+
     async def close(self) -> None: ...
 
 
@@ -173,6 +175,11 @@ class TwscrapeScraper:
 
     async def delete_account(self, username: str) -> bool:
         return await self._api.pool.delete_accounts(username)
+
+    async def set_account_active(self, username: str, active: bool) -> dict:
+        # 手动暂停/启用：暂停后取号逻辑不再选中；启用时清空冷却锁立即可用
+        await self._api.pool.set_active(username, active)
+        return await self._account_info(username)
 
     async def close(self) -> None:
         # twscrape 的 AccountsPool 无持久连接（每查询开合），无需显式清理
@@ -330,6 +337,15 @@ class MockScraper:
         del self._accounts[username]
         self._secrets.pop(username, None)
         return True
+
+    async def set_account_active(self, username: str, active: bool) -> dict:
+        if username not in self._accounts:
+            raise ValueError(f"账号不存在: {username}")
+        acc = self._accounts[username]
+        acc["active"] = bool(active)
+        if active:
+            acc["error_msg"] = ""
+        return dict(acc)
 
     async def close(self) -> None:
         return None

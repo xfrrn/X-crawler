@@ -558,9 +558,11 @@ createApp({
         }
       });
     },
-    /* 可用性 = 已登录 且 未锁定（active） */
-    avail(a) {
-      return !!(a.logged_in && a.active);
+    /* 账号状态标签：主动暂停 > 未登录 > 可用 */
+    accState(a) {
+      if (!a.active) return { cls: "off", label: "已暂停" };
+      if (!a.logged_in) return { cls: "off", label: "未登录" };
+      return { cls: "ok", label: "可用" };
     },
     async addAccountByPassword() {
       const u = this.pwForm.username.trim();
@@ -620,6 +622,18 @@ createApp({
         );
         if (r.logged_in) this.notify(`${a.username} 重新登录成功`, "success");
         else this.notify(`${a.username} 登录失败：${r.error_msg || "未知原因"}`);
+        await this.loadAccounts();
+      } catch (e) {
+        this.notify(e.message);
+      }
+    },
+    async setAccountActive(a, active) {
+      try {
+        await this.api(
+          `/accounts/${encodeURIComponent(a.username)}/${active ? "resume" : "pause"}`,
+          { method: "POST" }
+        );
+        this.notify(`${a.username} 已${active ? "启用" : "暂停"}`, "success");
         await this.loadAccounts();
       } catch (e) {
         this.notify(e.message);

@@ -52,6 +52,24 @@ async def relogin_account(username: str) -> dict:
     return info
 
 
+@router.post("/{username}/pause", dependencies=[Depends(require_admin)])
+async def pause_account(username: str) -> dict:
+    """主动暂停采集账号：取号逻辑立即不再选中它，保留账号与会话（仅后台面板可用）。"""
+    try:
+        return await state.scraper.set_account_active(username, False)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post("/{username}/resume", dependencies=[Depends(require_admin)])
+async def resume_account(username: str) -> dict:
+    """重新启用已暂停的采集账号：清空冷却锁，账号立即回到可用池（仅后台面板可用）。"""
+    try:
+        return await state.scraper.set_account_active(username, True)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
 @router.delete("/{username}", dependencies=[Depends(require_admin)])
 async def delete_account(username: str) -> dict:
     """删除采集账号（仅后台面板可用）。"""
