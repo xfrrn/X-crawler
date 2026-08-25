@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.config import Settings
 from app.db import Database
@@ -115,6 +115,19 @@ class WechatTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(WechatTargetError, "同名"):
             await self.service.resolve_target("同名")
 
+    async def test_collect_uses_current_article_list_parameters(self) -> None:
+        calls = []
+
+        async def request(endpoint, params):
+            calls.append((endpoint, params))
+            return {"publish_page": '{"publish_list":[]}'}
+
+        self.service._request_json = request  # type: ignore[method-assign]
+        await self.service.collect([{"id": 1, "creator_id": FAKE_ID}])
+        self.assertEqual(calls[0][1]["type"], "101_1")
+        self.assertEqual(calls[0][1]["free_publish_type"], 1)
+        self.assertEqual(calls[0][1]["search_field"], "null")
+
     def test_session_status_never_returns_secrets(self) -> None:
         self.service._persist_session(
             {
@@ -142,26 +155,106 @@ class WechatTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        class Response:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self, _limit):
-                return b'{"base_resp":{"ret":200003}}'
-
-        with patch("app.wechat.urlopen", return_value=Response()):
+        with patch.object(
+            self.service,
+            "_browser_fetch",
+            new=AsyncMock(return_value=(200, '{"base_resp":{"ret":200003}}')),
+        ):
             with self.assertRaises(WechatAuthError):
                 await self.service.resolve_target("目标公众号")
         self.assertEqual(self.service.session_status()["status"], "expired")
 
-        with patch("app.wechat.urlopen", side_effect=RuntimeError("cookie-secret token=123456")):
+        with patch.object(
+            self.service,
+            "_browser_fetch",
+            new=AsyncMock(side_effect=RuntimeError("cookie-secret token=123456")),
+        ):
             with self.assertRaises(WechatError) as caught:
                 await self.service.resolve_target("目标公众号")
         self.assertNotIn("cookie-secret", str(caught.exception))
         self.assertNotIn("123456", str(caught.exception))
+
+    async def test_rate_limit_does_not_expire_session(self) -> None:
+        self.service._persist_session(
+            {
+                "token": "123456",
+                "cookies": [{"name": "session", "value": "cookie-secret"}],
+                "user_agent": "test-agent",
+                "saved_at": "2026-08-23T00:00:00+00:00",
+            }
+        )
+
+        with patch.object(
+            self.service,
+            "_browser_fetch",
+            new=AsyncMock(
+                return_value=(200, '{"base_resp":{"ret":200013,"err_msg":"freq control"}}')
+            ),
+        ):
+            with self.assertRaisesRegex(WechatError, "请求过于频繁"):
+                await self.service.resolve_target("目标公众号")
+        self.assertEqual(self.service.session_status()["status"], "ready")
+
+        with patch.object(
+            self.service,
+            "_browser_fetch",
+            new=AsyncMock(return_value=(403, "")),
+        ):
+            with self.assertRaisesRegex(WechatError, "暂不可用"):
+                await self.service.resolve_target("目标公众号")
+        self.assertEqual(self.service.session_status()["status"], "ready")
+
+    async def test_browser_fetch_reuses_login_page(self) -> None:
+        class Page:
+            def is_closed(self):
+                return False
+
+            async def evaluate(self, _script, url):
+                self.url = url
+                return {"status": 200, "body": "{}"}
+
+        page = Page()
+        self.service._page = page
+        status, body = await self.service._browser_fetch(
+            "https://mp.weixin.qq.com/cgi-bin/searchbiz", {}
+        )
+        self.assertEqual((status, body), (200, "{}"))
+        self.assertEqual(page.url, "https://mp.weixin.qq.com/cgi-bin/searchbiz")
+
+    async def test_request_reads_session_after_login_lock(self) -> None:
+        self.service._persist_session(
+            {
+                "token": "111111",
+                "cookies": [{"name": "session", "value": "old"}],
+                "user_agent": "test-agent",
+                "saved_at": "2026-08-23T00:00:00+00:00",
+            }
+        )
+        seen_tokens = []
+
+        async def fetch(_url, session):
+            seen_tokens.append(session["token"])
+            return 200, json.dumps({"list": [{"nickname": "目标公众号", "fakeid": FAKE_ID}]})
+
+        await self.service._browser_lock.acquire()
+        try:
+            with patch.object(self.service, "_browser_fetch", side_effect=fetch):
+                request = asyncio.create_task(self.service.resolve_target("目标公众号"))
+                await asyncio.sleep(0)
+                self.service._persist_session(
+                    {
+                        "token": "222222",
+                        "cookies": [{"name": "session", "value": "new"}],
+                        "user_agent": "test-agent",
+                        "saved_at": "2026-08-23T00:00:01+00:00",
+                    }
+                )
+                self.service._browser_lock.release()
+                self.assertEqual(await request, FAKE_ID)
+        finally:
+            if self.service._browser_lock.locked():
+                self.service._browser_lock.release()
+        self.assertEqual(seen_tokens, ["222222"])
 
     async def test_duplicate_login_reuses_the_active_task(self) -> None:
         started = asyncio.Event()

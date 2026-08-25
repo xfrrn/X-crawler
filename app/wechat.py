@@ -10,9 +10,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
 
 from playwright.async_api import async_playwright
 
@@ -29,7 +27,8 @@ _QR_SELECTOR = ".login__type__container__scan__qrcode"
 _FAKE_ID = re.compile(r"^Mz[A-Za-z0-9+/]{8,}={0,2}$")
 _TOKEN = re.compile(r"(?:[?&]token=|\btoken\b\s*[:=]\s*['\"])(\d+)")
 _MAX_RESPONSE_BYTES = 4 << 20
-_AUTH_ERROR_CODES = {200003, 200013, 200014, 200023}
+_AUTH_ERROR_CODES = {200003}
+_RATE_LIMIT_ERROR_CODES = {200013}
 
 
 class WechatError(RuntimeError):
@@ -139,6 +138,11 @@ class WechatService:
         self._session_path = Path(settings.data_dir) / "wechat-session.json"
         self._login_task: asyncio.Task[None] | None = None
         self._qr_png: bytes | None = None
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._context: Any = None
+        self._page: Any = None
+        self._browser_lock = asyncio.Lock()
         self._status = "ready" if self._read_session() else "missing"
         self._last_error: str | None = None
 
@@ -169,6 +173,8 @@ class WechatService:
         if self._login_task is not None and not self._login_task.done():
             self._login_task.cancel()
             await asyncio.gather(self._login_task, return_exceptions=True)
+        async with self._browser_lock:
+            await self._close_browser()
 
     async def resolve_target(self, target: str) -> str:
         value = target.strip()
@@ -178,7 +184,7 @@ class WechatService:
             raise WechatTargetError("请输入公众号精确名称或 fakeid")
         data = await self._request_json(
             _SEARCH_URL,
-            {"action": "search_biz", "begin": 0, "count": 20, "query": value},
+            {"action": "search_biz", "begin": 0, "count": 5, "query": value},
         )
         results = data.get("list")
         if not isinstance(results, list):
@@ -203,10 +209,14 @@ class WechatService:
                 _ARTICLES_URL,
                 {
                     "sub": "list",
+                    "search_field": "null",
                     "sub_action": "list_ex",
                     "begin": 0,
                     "count": self._settings.wechat_max_articles,
+                    "query": "",
                     "fakeid": monitor["creator_id"],
+                    "type": "101_1",
+                    "free_publish_type": 1,
                 },
             )
             posts.extend(normalize_articles(data, monitor))
@@ -223,49 +233,47 @@ class WechatService:
 
     async def _login(self) -> None:
         try:
-            async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(headless=True)
-                try:
-                    context = await browser.new_context()
-                    page = await context.new_page()
-                    await page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
-                    qr = page.locator(_QR_SELECTOR).first
-                    await qr.wait_for(state="visible", timeout=20_000)
-                    await qr.evaluate("image => image.decode()", timeout=30_000)
-                    qr_png = await qr.screenshot(type="png")
-                    if len(qr_png) < 400:
-                        raise RuntimeError("invalid qr")
-                    self._qr_png = qr_png
-                    self._status = "waiting_scan"
-                    await page.wait_for_url(re.compile(r".*(?:[?&]token=|/cgi-bin/home).*"), timeout=180_000)
-                    token = _token_from_text(page.url)
-                    if not token:
-                        await page.goto(_HOME_URL, wait_until="domcontentloaded", timeout=20_000)
-                        token = _token_from_text(page.url) or _token_from_text(await page.content())
-                    cookies = await context.cookies()
-                    user_agent = await page.evaluate("navigator.userAgent")
-                    if not token or not cookies or not isinstance(user_agent, str):
-                        raise RuntimeError("incomplete session")
-                    self._persist_session(
-                        {
-                            "token": token,
-                            "cookies": [
-                                {key: cookie.get(key) for key in ("name", "value", "domain", "path", "expires")}
-                                for cookie in cookies
-                            ],
-                            "user_agent": user_agent[:1024],
-                            "saved_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                    )
-                    self._status = "ready"
-                    self._last_error = None
-                    self._qr_png = None
-                    logger.info("[wechat] 微信公众号后台扫码登录成功")
-                finally:
-                    await browser.close()
+            async with self._browser_lock:
+                await self._open_browser()
+                page = self._page
+                await page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+                qr = page.locator(_QR_SELECTOR).first
+                await qr.wait_for(state="visible", timeout=20_000)
+                await qr.evaluate("image => image.decode()", timeout=30_000)
+                qr_png = await qr.screenshot(type="png")
+                if len(qr_png) < 400:
+                    raise RuntimeError("invalid qr")
+                self._qr_png = qr_png
+                self._status = "waiting_scan"
+                await page.wait_for_url(re.compile(r".*(?:[?&]token=|/cgi-bin/home).*"), timeout=180_000)
+                token = _token_from_text(page.url)
+                if not token:
+                    await page.goto(_HOME_URL, wait_until="domcontentloaded", timeout=20_000)
+                    token = _token_from_text(page.url) or _token_from_text(await page.content())
+                cookies = await self._context.cookies()
+                user_agent = await page.evaluate("navigator.userAgent")
+                if not token or not cookies or not isinstance(user_agent, str):
+                    raise RuntimeError("incomplete session")
+                self._persist_session(
+                    {
+                        "token": token,
+                        "cookies": [
+                            {key: cookie.get(key) for key in ("name", "value", "domain", "path", "expires")}
+                            for cookie in cookies
+                        ],
+                        "user_agent": user_agent[:1024],
+                        "saved_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                self._status = "ready"
+                self._last_error = None
+                self._qr_png = None
+                logger.info("[wechat] 微信公众号后台扫码登录成功")
         except asyncio.CancelledError:
+            await self._close_browser()
             raise
         except Exception:
+            await self._close_browser()
             # 浏览器异常经常包含完整跳转 URL；不得把可能带 token 的原始异常写入日志或响应。
             self._status = "ready" if self._read_session() else "error"
             self._last_error = "扫码登录失败或超时，请重新发起登录"
@@ -273,37 +281,26 @@ class WechatService:
             logger.warning("[wechat] 微信公众号后台扫码登录失败或超时")
 
     async def _request_json(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
-        session = self._read_session()
-        if session is None:
-            self._status = "expired"
-            raise WechatAuthError("微信公众号后台尚未登录，请先在 X-crawler 管理页扫码")
-        request_params = {
-            **params,
-            "token": session["token"],
-            "lang": "zh_CN",
-            "f": "json",
-            "ajax": 1,
-        }
-
-        def request() -> dict[str, Any]:
-            url = endpoint + "?" + urlencode(request_params)
-            cookie = "; ".join(f"{item['name']}={item['value']}" for item in session["cookies"])
-            headers = {
-                "Accept": "application/json, text/plain, */*",
-                "Cookie": cookie,
-                "Referer": f"{_HOME_URL}?t=home/index&lang=zh_CN&token={session['token']}",
-                "User-Agent": session["user_agent"],
-            }
-            try:
-                with urlopen(Request(url, headers=headers), timeout=15) as response:
-                    body = response.read(_MAX_RESPONSE_BYTES + 1)
-            except HTTPError as error:
-                if error.code in (401, 403):
-                    raise WechatAuthError("微信公众号后台登录态已失效，请重新扫码") from None
-                raise WechatError("微信公众号接口暂不可用") from None
-            except (URLError, TimeoutError, OSError):
-                raise WechatError("微信公众号接口暂不可用") from None
-            if len(body) > _MAX_RESPONSE_BYTES:
+        try:
+            async with self._browser_lock:
+                session = self._read_session()
+                if session is None:
+                    raise WechatAuthError("微信公众号后台尚未登录，请先在 X-crawler 管理页扫码")
+                request_params = {
+                    **params,
+                    "token": session["token"],
+                    "lang": "zh_CN",
+                    "f": "json",
+                    "ajax": 1,
+                }
+                status, body = await self._browser_fetch(
+                    endpoint + "?" + urlencode(request_params), session
+                )
+            if status == 401:
+                raise WechatAuthError("微信公众号后台登录态已失效，请重新扫码")
+            if not 200 <= status < 300:
+                raise WechatError("微信公众号接口暂不可用")
+            if len(body.encode("utf-8")) > _MAX_RESPONSE_BYTES:
                 raise WechatError("微信公众号响应过大")
             try:
                 decoded = json.loads(body)
@@ -317,17 +314,15 @@ class WechatService:
                     ret = int(base_response.get("ret", 0))
                 except (TypeError, ValueError):
                     ret = -1
+                if ret in _RATE_LIMIT_ERROR_CODES:
+                    raise WechatError("微信公众号接口请求过于频繁，请稍后重试")
                 if ret in _AUTH_ERROR_CODES:
                     raise WechatAuthError("微信公众号后台登录态已失效，请重新扫码")
                 if ret != 0:
                     raise WechatError("微信公众号接口拒绝了本次请求")
-            return decoded
-
-        try:
-            result = await asyncio.to_thread(request)
-        except WechatAuthError:
+        except WechatAuthError as error:
             self._status = "expired"
-            self._last_error = "微信公众号后台登录态已失效，请重新扫码"
+            self._last_error = str(error)
             raise
         except WechatError:
             raise
@@ -336,7 +331,73 @@ class WechatService:
             raise WechatError("微信公众号接口暂不可用") from None
         self._status = "ready"
         self._last_error = None
-        return result
+        return decoded
+
+    async def _browser_fetch(self, url: str, session: dict[str, Any]) -> tuple[int, str]:
+        try:
+            if self._page is None or self._page.is_closed():
+                await self._open_browser(session)
+                await self._page.goto(
+                    f"{_HOME_URL}?t=home/index&lang=zh_CN&token={session['token']}",
+                    wait_until="domcontentloaded",
+                    timeout=20_000,
+                )
+            result = await asyncio.wait_for(
+                self._page.evaluate(
+                    """async url => {
+                        const response = await fetch(url, {
+                            credentials: "include",
+                            headers: {
+                                "Accept": "application/json, text/plain, */*",
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                        });
+                        return {status: response.status, body: await response.text()};
+                    }""",
+                    url,
+                ),
+                timeout=15,
+            )
+        except Exception:
+            await self._close_browser()
+            raise
+        if (
+            not isinstance(result, dict)
+            or not isinstance(result.get("status"), int)
+            or not isinstance(result.get("body"), str)
+        ):
+            raise WechatError("微信公众号返回了无效响应")
+        return result["status"], result["body"]
+
+    async def _open_browser(self, session: dict[str, Any] | None = None) -> None:
+        await self._close_browser()
+        self._playwright = await async_playwright().start()
+        try:
+            self._browser = await self._playwright.chromium.launch(headless=True)
+            self._context = await self._browser.new_context(
+                user_agent=session["user_agent"] if session else None
+            )
+            if session:
+                await self._context.add_cookies(
+                    [
+                        {"name": item["name"], "value": item["value"], "url": _LOGIN_URL}
+                        for item in session["cookies"]
+                    ]
+                )
+            self._page = await self._context.new_page()
+        except Exception:
+            await self._close_browser()
+            raise
+
+    async def _close_browser(self) -> None:
+        playwright, browser = self._playwright, self._browser
+        self._playwright = self._browser = self._context = self._page = None
+        try:
+            if browser is not None:
+                await browser.close()
+        finally:
+            if playwright is not None:
+                await playwright.stop()
 
     def _read_session(self) -> dict[str, Any] | None:
         try:
