@@ -93,6 +93,7 @@ createApp({
       // 登录态
       authed: false,
       username: "",
+      serviceReachable: false,
       loggingIn: false,
       loginError: "",
       loginForm: { username: "", password: "" },
@@ -162,7 +163,26 @@ createApp({
       const platformStats = Object.values(this.pStats.per_platform || {});
       const runtime = this.stats.monitors_detail || [];
       const platformRuntime = this.pStats.runtime || [];
-      const platformPaused = this.pmonitors.filter((item) => !item.active).length;
+      const accountIssues = (this.acc.accounts || []).filter(
+        (item) => !item.logged_in || (item.error_msg && item.error_msg !== "None")
+      ).length;
+      const xIssues = this.monitors.filter((item) => item.last_error).length;
+      const xSchedulerIssues = runtime.filter(
+        (item) => item.active && !item.task_alive
+      ).length;
+      const failedPlatforms = new Set(
+        this.pmonitors.filter((item) => item.last_error).map((item) => item.platform)
+      );
+      platformRuntime.forEach((item) => {
+        if (item.last_error) failedPlatforms.add(item.platform);
+      });
+      const platformIssues = failedPlatforms.size;
+      const schedulerIssues = platformRuntime.filter(
+        (item) =>
+          (this.pStats.per_platform?.[item.platform]?.active || 0) > 0 &&
+          (!item.scheduled || this.platformInitError(item.platform))
+      ).length;
+      const wechatIssues = ["expired", "error"].includes(this.wechatSession.status) ? 1 : 0;
       return {
         targetsTotal:
           (this.stats.monitors_total || 0) +
@@ -174,10 +194,12 @@ createApp({
           (this.stats.tweets_total || 0) +
           platformStats.reduce((sum, item) => sum + (item.posts || 0), 0),
         issues:
-          (this.stats.monitors_paused || 0) +
-          platformPaused +
-          (this.acc.stats?.inactive || 0) +
-          platformRuntime.filter((item) => item.consecutive_errors > 0).length,
+          xIssues +
+          xSchedulerIssues +
+          platformIssues +
+          accountIssues +
+          schedulerIssues +
+          wechatIssues,
         totalPolls: runtime.reduce((sum, item) => sum + (item.total_polls || 0), 0),
         totalNew: runtime.reduce((sum, item) => sum + (item.total_new || 0), 0),
         runtimeErrors: runtime.reduce(
@@ -185,6 +207,17 @@ createApp({
           0
         ),
       };
+    },
+    serviceState() {
+      if (!this.serviceReachable) return { text: "服务连接异常", state: "warning" };
+      const platformStopped = (this.pStats.runtime || []).some(
+        (item) =>
+          (this.pStats.per_platform?.[item.platform]?.active || 0) > 0 &&
+          (!item.scheduled || this.platformInitError(item.platform))
+      );
+      return this.stats.status === "degraded" || platformStopped
+        ? { text: "部分调度异常", state: "warning" }
+        : { text: "服务已连接", state: "ok" };
     },
   },
   methods: {
@@ -226,11 +259,18 @@ createApp({
     },
     /* ---- 通用请求：401 视为会话失效，回登录视图 ---- */
     async api(path, opts = {}) {
-      const res = await fetch(path, {
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        ...opts,
-      });
+      let res;
+      try {
+        res = await fetch(path, {
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          ...opts,
+        });
+        this.serviceReachable = true;
+      } catch (e) {
+        this.serviceReachable = false;
+        throw new Error("无法连接 X-Crawler 服务");
+      }
       if (!res.ok) {
         let msg = res.status + " " + res.statusText;
         try {
@@ -324,10 +364,10 @@ createApp({
       }
     },
     removeMonitor(m) {
-      this.askConfirm(`删除 @${m.username} 的采集目标？历史内容仍会保留。`, async () => {
+      this.askConfirm(`停止 @${m.username} 的采集？历史内容仍会保留。`, async () => {
         try {
           await this.api(`/monitors/${m.id}`, { method: "DELETE" });
-          this.notify("采集目标已删除", "success");
+          this.notify("采集目标已停止", "success");
           await this.loadMonitors();
         } catch (e) {
           this.notify(e.message);
@@ -371,27 +411,69 @@ createApp({
       const m = this.pmonitors.find((x) => x.id === mid);
       return m ? m.label : "#" + mid;
     },
-    /* 抓取状态：按平台 runtime 推导（同一平台的监控共用同一个子进程）。
-       正在抓取 = 子进程在跑；抓取完成 = 上次跑成功；抓取失败 = 上次跑抛异常；
-       等待中 = 还没跑过（等首次定时轮询）。 */
+    targetState(m) {
+      if (!m.active)
+        return m.last_error
+          ? { cls: "error", label: "失败后暂停" }
+          : { cls: "off", label: "已停止" };
+      if (m.last_error) return { cls: "error", label: "采集异常" };
+      if (!m.last_success_at) return { cls: "off", label: "等待首次采集" };
+      return { cls: "ok", label: "已启用" };
+    },
+    xTargetState(m) {
+      const runtime = (this.stats.monitors_detail || []).find((item) => item.id === m.id);
+      if (m.active && runtime && !runtime.task_alive)
+        return { cls: "error", label: "调度异常" };
+      return this.targetState(m);
+    },
+    platformTargetState(m) {
+      const runtime = (this.pStats.runtime || []).find((item) => item.platform === m.platform);
+      if (m.active && this.platformInitError(m.platform))
+        return { cls: "error", label: "初始化失败" };
+      if (m.active && runtime && !runtime.scheduled)
+        return { cls: "error", label: "调度不可用" };
+      if (!m.active)
+        return m.last_error
+          ? { cls: "error", label: "抓取失败后暂停" }
+          : { cls: "off", label: "已停止" };
+      if (m.last_error) return { cls: "error", label: "目标抓取异常" };
+      if (!m.last_success_at) return { cls: "off", label: "等待首次抓取" };
+      return { cls: "ok", label: "已启用" };
+    },
+    platformInitError(plat) {
+      const components = this.pStats.components || {};
+      if (plat === "wx" && components.playwright_ready === false)
+        return "Playwright Chromium 初始化失败";
+      if (plat !== "wx" && components.mediacrawler_ready === false)
+        return "MediaCrawler 初始化失败";
+      return "";
+    },
+    /* 平台 runtime 是目标执行结果的汇总，目标自身状态以 last_error 为准。 */
     platCrawlStatus(plat) {
       const rt = (this.pStats.runtime || []).find((r) => r.platform === plat);
+      if (this.platformInitError(plat))
+        return { text: "初始化失败", cls: "error", rt };
+      if (rt && !rt.scheduled)
+        return { text: "调度不可用", cls: "error", rt };
       if (rt && rt.running) return { text: "正在抓取", cls: "busy", rt };
       if (rt && rt.total_runs > 0) {
-        return rt.consecutive_errors > 0
-          ? { text: "抓取失败", cls: "error", rt }
-          : { text: "抓取完成", cls: "ok", rt };
+        return rt.last_error
+          ? { text: "平台部分失败", cls: "error", rt }
+          : { text: "平台抓取成功", cls: "ok", rt };
       }
-      return { text: "等待中", cls: "wait", rt };
+      return { text: "等待首次调度", cls: "wait", rt };
     },
     platRunTip(plat) {
       const st = this.platCrawlStatus(plat);
       const rt = st.rt;
-      if (!rt || !rt.total_runs) return "尚未抓取，等待定时轮询或手动「立即抓取」";
+      if (this.platformInitError(plat)) return this.platformInitError(plat);
+      if (!rt) return "平台调度状态尚未加载";
+      if (!rt.scheduled) return rt.unavailable_reason || "平台调度不可用";
+      if (!rt.total_runs) return "尚未抓取，等待定时轮询或手动「立即抓取」";
       const parts = [`已跑 ${rt.total_runs} 次`];
       if (rt.last_run_ms != null) parts.push(`上次耗时 ${this.fmtMs(rt.last_run_ms)}`);
       if (rt.total_new > 0) parts.push(`共新增 ${rt.total_new} 条`);
-      if (st.text === "抓取失败") parts.push("原因见错误列 / data/logs 日志");
+      if (rt.last_error) parts.push(rt.last_error);
       return parts.join(" · ");
     },
     async loadPlatformMonitors() {
@@ -423,7 +505,7 @@ createApp({
         missing: "未登录",
         starting: "正在生成二维码",
         waiting_scan: "等待扫码",
-        ready: "已登录",
+        ready: "会话已保存",
         expired: "登录态已失效",
         error: "登录失败",
       }[this.wechatSession.status] || this.wechatSession.status;
@@ -558,11 +640,13 @@ createApp({
         }
       });
     },
-    /* 账号状态标签：主动暂停 > 未登录 > 可用 */
+    /* 账号 active 只代表允许调度；登录材料和采集错误单独判断。 */
     accState(a) {
-      if (!a.active) return { cls: "off", label: "已暂停" };
-      if (!a.logged_in) return { cls: "off", label: "未登录" };
-      return { cls: "ok", label: "可用" };
+      if (a.error_msg && a.error_msg !== "None")
+        return { cls: "error", label: "会话异常" };
+      if (!a.logged_in) return { cls: "error", label: "未登录" };
+      if (!a.active) return { cls: "off", label: "不可调度" };
+      return { cls: "ok", label: "已启用" };
     },
     async addAccountByPassword() {
       const u = this.pwForm.username.trim();
@@ -582,7 +666,7 @@ createApp({
         });
         this.pwForm = { username: "", password: "", email: "", email_password: "", proxy: "" };
         this.accMsg = r.logged_in
-          ? `账号 ${u} 添加成功，已登录（可用）`
+          ? `账号 ${u} 添加成功，已登录并启用`
           : `账号 ${u} 已添加，但登录失败：${r.error_msg || "未知原因"}`;
         this.accMsgOk = r.logged_in;
         await this.loadAccounts();
@@ -604,7 +688,7 @@ createApp({
           body: JSON.stringify({ username: u, cookies: this.ckForm.cookies }),
         });
         this.ckForm = { username: "", cookies: "" };
-        this.accMsg = `账号 ${u} cookies 导入成功（可用）`;
+        this.accMsg = `账号 ${u} Cookies 已导入，首次采集请求会验证会话有效性`;
         this.accMsgOk = true;
         await this.loadAccounts();
       } catch (e) {
@@ -633,7 +717,7 @@ createApp({
           `/accounts/${encodeURIComponent(a.username)}/${active ? "resume" : "pause"}`,
           { method: "POST" }
         );
-        this.notify(`${a.username} 已${active ? "启用" : "暂停"}`, "success");
+        this.notify(`${a.username} 已${active ? "启用" : "停止调度"}`, "success");
         await this.loadAccounts();
       } catch (e) {
         this.notify(e.message);
@@ -652,7 +736,10 @@ createApp({
     refreshForRoute() {
       const r = this.route;
       if (r === "overview") this.refreshAll();
-      else if (r === "monitors") this.loadMonitors();
+      else if (r === "monitors") {
+        this.loadMonitors();
+        this.loadStats();
+      }
       else if (r === "tweets") {
         if (this.tweetMonId == null && this.monitors.length) {
           this.tweetMonId = this.monitors[0].id;

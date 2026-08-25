@@ -16,6 +16,9 @@ class AdminUiSmokeTest(unittest.TestCase):
             self.assertIn(f'ref="{dialog}"', html)
         self.assertNotIn("confirm(", js)
         self.assertNotIn("alert(", js)
+        self.assertNotIn("服务运行中", html)
+        self.assertIn("last_success_at", html)
+        self.assertIn("平台抓取成功", js)
 
 
 if __name__ == "__main__":

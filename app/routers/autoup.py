@@ -151,7 +151,9 @@ async def _set_target_active(target: dict, active: bool) -> None:
         else:
             await db.update_monitor(target["monitor_id"], active=int(active))
     else:
-        await db.update_platform_monitor(target["monitor_id"], active=int(active))
+        await db.update_platform_monitor(
+            target["monitor_id"], active=int(active), last_error=None
+        )
 
 
 async def _target_out(target: dict) -> AutoUpTargetOut:
@@ -166,7 +168,7 @@ async def _target_out(target: dict) -> AutoUpTargetOut:
             "accountExternalId": target["canonical_key"],
             "displayName": display_name,
             "active": bool(monitor["active"]),
-            "lastCollectedAt": monitor.get("last_poll_at"),
+            "lastCollectedAt": monitor.get("last_success_at"),
             "lastError": monitor.get("last_error"),
         }
     )

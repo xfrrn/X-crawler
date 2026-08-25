@@ -61,7 +61,9 @@ async def stats() -> dict:
                 "total_polls": rt.get("total_polls", 0),
                 "total_new": rt.get("total_new", 0),
                 "last_poll_ms": rt.get("last_poll_ms"),
+                "task_alive": state.manager.task_alive(m["id"]),
                 "last_poll_at": m["last_poll_at"],
+                "last_success_at": m["last_success_at"],
                 "last_error": m["last_error"],
                 "last_seen_tweet_id": m["last_seen_tweet_id"],
             }
@@ -71,7 +73,9 @@ async def stats() -> dict:
     if state.started_at is not None:
         uptime = int((datetime.now(timezone.utc) - state.started_at).total_seconds())
 
+    scheduler_ok = all(not m["active"] or state.manager.task_alive(m["id"]) for m in monitors)
     return {
+        "status": "ok" if scheduler_ok else "degraded",
         "uptime_seconds": uptime,
         "scraper_mode": settings.scraper_mode,
         "monitors_total": len(monitors),

@@ -156,6 +156,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .topbar-actions, .header-actions, .run-form { display: flex; align-items: center; gap: var(--space-2); }
 .service-state { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
 .service-state i, .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+.service-state[data-state="warning"] i { background: var(--warning); }
 .status-dot { display: inline-block; margin-right: 7px; }
 .status-dot[data-state="warning"] { background: var(--warning); }
 .content { width: min(100%, 1360px); margin: 0 auto; padding: var(--space-6) var(--space-8) 48px; }
@@ -253,6 +254,7 @@ button.metric-card { cursor: pointer; }
 .badge { display: inline-flex; min-height: 22px; align-items: center; border-radius: 999px; padding: 0 8px; background: var(--muted); color: var(--muted-foreground); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .badge.ok { background: var(--success-soft); color: var(--success); }
 .badge.off { background: var(--warning-soft); color: var(--warning); }
+.badge.error { background: var(--destructive-soft); color: var(--destructive); }
 .badge.crawl.busy { background: var(--brand-soft); color: var(--brand); }
 .badge.crawl.error { background: var(--destructive-soft); color: var(--destructive); }
 .badge.crawl.wait { background: var(--muted); color: var(--muted-foreground); }

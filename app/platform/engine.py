@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 # MediaCrawler 的 sqlite 产物表名（白名单，杜绝 SQL 注入）
 PLATFORM_TABLE = {"xhs": "xhs_note", "dy": "douyin_aweme", "ks": "kuaishou_video"}
 PLATFORMS = ("xhs", "dy", "ks")
+_SOFT_FAILURE_MARKERS = (
+    "Failed to parse creator URL:",
+    "Access restricted for creator",
+)
 
 
 class MediaCrawlerError(RuntimeError):
@@ -188,11 +192,12 @@ class MediaCrawlerEngine:
         return cmd
 
     async def run_platform(self, platform: str, monitors: list[dict]) -> EngineResult:
-        """跑一轮某平台的全部 active 监控，归一化后 UPSERT 入库，返回本次新插入的行。"""
+        """跑一轮指定平台监控，归一化后 UPSERT 入库，返回本次新插入的行。"""
         # 相对路径（默认 ./mediacrawler）按项目根解析为绝对路径
         repo = Path(self._settings.mc_repo_path).resolve()
         creator_ids = [m["creator_id"] for m in monitors]
         cmd = self._build_cmd(platform, creator_ids)
+        run_started_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
         if not repo.is_dir():
             raise MediaCrawlerError(f"MC_REPO_PATH 不存在: {repo}")
@@ -237,6 +242,16 @@ class MediaCrawlerEngine:
                 f"MediaCrawler 退出码 {proc.returncode}: {output[-2000:]}"
                 f"（完整日志: {log_path}）"
             )
+        soft_failure = next(
+            (
+                line.strip()
+                for line in output.splitlines()
+                if any(marker in line for marker in _SOFT_FAILURE_MARKERS)
+            ),
+            None,
+        )
+        if soft_failure:
+            raise MediaCrawlerError(f"{soft_failure}（完整日志: {log_path}）")
 
         # 读产物（子进程已退出，SQLAlchemy 已 commit，只读无锁冲突）
         db_path = repo / "database" / "sqlite_tables.db"
@@ -249,7 +264,11 @@ class MediaCrawlerEngine:
         reader = await aiosqlite.connect(db_path)
         reader.row_factory = aiosqlite.Row
         try:
-            cur = await reader.execute(f"SELECT * FROM {table}")
+            # sqlite 是累计产物，只读取本次子进程触碰的行，避免单目标执行时把
+            # 其他创作者的历史内容兜底归到当前目标。
+            cur = await reader.execute(
+                f"SELECT * FROM {table} WHERE last_modify_ts >= ?", (run_started_ms,)
+            )
             rows = [row_to_dict(r) for r in await cur.fetchall()]
         finally:
             await reader.close()

@@ -134,14 +134,18 @@ class TwscrapeScraper:
         return out
 
     async def account_infos(self) -> list[dict]:
-        return await self._api.pool.accounts_info()
+        infos = await self._api.pool.accounts_info()
+        for info in infos:
+            if info.get("error_msg") in (None, "", "None"):
+                info["error_msg"] = None
+        return infos
 
     async def pool_stats(self) -> dict:
         return await self._api.pool.stats()
 
     async def _account_info(self, username: str) -> dict:
         """从 accounts_info() 里捞单个账号的当前状态（含登录结果/错误）。"""
-        for info in await self._api.pool.accounts_info():
+        for info in await self.account_infos():
             if info["username"] == username:
                 return dict(info)
         raise ValueError(f"账号不存在: {username}")
@@ -174,10 +178,13 @@ class TwscrapeScraper:
         return await self._account_info(username)
 
     async def delete_account(self, username: str) -> bool:
-        return await self._api.pool.delete_accounts(username)
+        if await self._api.pool.get_account(username) is None:
+            return False
+        await self._api.pool.delete_accounts(username)
+        return True
 
     async def set_account_active(self, username: str, active: bool) -> dict:
-        # 手动暂停/启用：暂停后取号逻辑不再选中；启用时清空冷却锁立即可用
+        # 手动暂停/启用只改变是否参与调度；限流锁仍按原到期时间释放。
         await self._api.pool.set_active(username, active)
         return await self._account_info(username)
 

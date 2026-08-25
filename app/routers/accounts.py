@@ -63,7 +63,7 @@ async def pause_account(username: str) -> dict:
 
 @router.post("/{username}/resume", dependencies=[Depends(require_admin)])
 async def resume_account(username: str) -> dict:
-    """重新启用已暂停的采集账号：清空冷却锁，账号立即回到可用池（仅后台面板可用）。"""
+    """重新启用已暂停的采集账号（已有的限流锁仍按原时间释放）。"""
     try:
         return await state.scraper.set_account_active(username, True)
     except ValueError as e:

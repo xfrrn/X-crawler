@@ -45,29 +45,29 @@
     <div class="main-shell">
       <header class="topbar">
         <div><p class="topbar-context">{{ activePage.group }}</p><h1>{{ activePage.title }}</h1><p>{{ activePage.description }}</p></div>
-        <div class="topbar-actions"><span class="service-state"><i></i>服务运行中</span><button class="btn" type="button" @click="refreshCurrent">刷新数据</button></div>
+        <div class="topbar-actions"><span class="service-state" :data-state="serviceState.state"><i></i>{{ serviceState.text }}</span><button class="btn" type="button" @click="refreshCurrent">刷新数据</button></div>
       </header>
 
       <main class="content">
         <section v-if="route === 'overview'" class="page-section">
           <div class="metric-grid">
-            <article class="metric-card"><span>采集目标</span><strong>{{ dashboard.targetsTotal }}</strong><small>{{ dashboard.targetsActive }} 个运行中</small></article>
+            <article class="metric-card"><span>采集目标</span><strong>{{ dashboard.targetsTotal }}</strong><small>{{ dashboard.targetsActive }} 个已启用</small></article>
             <article class="metric-card"><span>已收录内容</span><strong>{{ fmtNum(dashboard.contentsTotal) }}</strong><small>跨全部采集渠道</small></article>
             <article class="metric-card"><span>今日 X 新增</span><strong>{{ fmtNum(stats.tweets_today ?? 0) }}</strong><small>按 UTC 自然日统计</small></article>
-            <article class="metric-card" :data-state="dashboard.issues ? 'warning' : 'ok'"><span>需要处理</span><strong>{{ dashboard.issues }}</strong><small>{{ dashboard.issues ? '暂停、失效或抓取异常' : '当前运行正常' }}</small></article>
+            <article class="metric-card" :data-state="dashboard.issues ? 'warning' : 'ok'"><span>需要处理</span><strong>{{ dashboard.issues }}</strong><small>{{ dashboard.issues ? '登录、调度或采集异常' : '当前未发现异常' }}</small></article>
           </div>
           <div class="dashboard-grid">
             <article class="panel channel-panel">
               <header class="panel-head"><div><h2>采集渠道</h2><p>目标、内容和最近运行状态</p></div><button class="btn small" @click="go('pmonitors')">管理目标</button></header>
               <div class="channel-list">
-                <div class="channel-row"><span class="platform-mark">X</span><div><strong>X / Twitter</strong><small>{{ stats.monitors_active ?? 0 }} / {{ stats.monitors_total ?? 0 }} 个目标运行中</small></div><span class="channel-count">{{ fmtNum(stats.tweets_total ?? 0) }} 条</span></div>
-                <div v-for="pl in platforms" :key="pl.key" class="channel-row"><span class="platform-mark">{{ pl.mark }}</span><div><strong>{{ pl.name }}</strong><small>{{ pStats.per_platform?.[pl.key]?.active ?? 0 }} / {{ pStats.per_platform?.[pl.key]?.monitors ?? 0 }} 个目标运行中</small></div><span class="channel-count">{{ fmtNum(pStats.per_platform?.[pl.key]?.posts ?? 0) }} 条</span></div>
+                <div class="channel-row"><span class="platform-mark">X</span><div><strong>X / Twitter</strong><small>{{ stats.monitors_active ?? 0 }} / {{ stats.monitors_total ?? 0 }} 个目标已启用</small></div><span class="channel-count">{{ fmtNum(stats.tweets_total ?? 0) }} 条</span></div>
+                <div v-for="pl in platforms" :key="pl.key" class="channel-row"><span class="platform-mark">{{ pl.mark }}</span><div><strong>{{ pl.name }}</strong><small>{{ pStats.per_platform?.[pl.key]?.active ?? 0 }} / {{ pStats.per_platform?.[pl.key]?.monitors ?? 0 }} 个目标已启用</small></div><span class="channel-count">{{ fmtNum(pStats.per_platform?.[pl.key]?.posts ?? 0) }} 条</span></div>
               </div>
             </article>
             <article class="panel session-panel">
               <header class="panel-head"><div><h2>登录与会话</h2><p>采集凭据只保存在本机</p></div></header>
               <div class="session-summary">
-                <div><span>X 采集账号</span><strong>{{ acc.stats?.active ?? 0 }} / {{ acc.stats?.total ?? 0 }} 可用</strong></div>
+                <div><span>X 采集账号</span><strong>{{ acc.stats?.active ?? 0 }} / {{ acc.stats?.total ?? 0 }} 已启用</strong></div>
                 <div><span>微信公众号后台</span><strong><i class="status-dot" :data-state="wechatSession.status === 'ready' ? 'ok' : 'warning'"></i>{{ wechatStatusLabel() }}</strong></div>
               </div>
               <button class="btn panel-action" @click="go('accounts')">管理登录会话</button>
@@ -81,9 +81,9 @@
             <div class="target-list">
               <article v-for="m in monitors" :key="m.id" class="target-row">
                 <div class="target-identity"><span class="platform-mark">X</span><div><strong>@{{ m.username }}</strong><small>{{ m.display_name || '未获取昵称' }} · #{{ m.id }} · 每 {{ m.interval_seconds }} 秒</small></div></div>
-                <div class="target-state"><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span><small>上次采集 {{ fmtTime(m.last_poll_at) }}</small></div>
+                <div class="target-state"><span class="badge" :class="xTargetState(m).cls">{{ xTargetState(m).label }}</span><small>成功 {{ fmtTime(m.last_success_at) }} · 尝试 {{ fmtTime(m.last_poll_at) }}</small></div>
                 <p v-if="m.last_error" class="row-error" :title="m.last_error">{{ m.last_error }}</p>
-                <div class="row-actions"><button class="btn small" @click="openTweets(m)">查看内容</button><button v-if="!m.active" class="btn small" @click="resumeMonitor(m)">恢复</button><button class="btn small danger" @click="removeMonitor(m)">删除</button></div>
+                <div class="row-actions"><button class="btn small" @click="openTweets(m)">查看内容</button><button v-if="!m.active || xTargetState(m).label === '调度异常'" class="btn small" @click="resumeMonitor(m)">恢复</button><button v-if="m.active" class="btn small danger" @click="removeMonitor(m)">停止</button></div>
               </article>
               <div v-if="!monitors.length" class="empty-state"><strong>还没有 X 采集目标</strong><p>添加一个账号后，采集器会按设定间隔自动拉取内容。</p><button class="btn primary" @click="openDialog('monitorDialog')">添加 X 账号</button></div>
             </div>
@@ -103,7 +103,7 @@
             <div class="target-list">
               <article v-for="m in visiblePlatformMonitors" :key="m.id" class="target-row">
                 <div class="target-identity"><span class="platform-mark">{{ platformMark(m.platform) }}</span><div><strong>{{ m.label }}</strong><small>{{ platName(m.platform) }} · <span class="mono" :title="m.creator_id">{{ shortId(m.creator_id, 8, 6) }}</span> · #{{ m.id }}</small></div></div>
-                <div class="target-state"><span class="badge" :class="m.active ? 'ok' : 'off'">{{ m.active ? '运行中' : '已暂停' }}</span><span class="badge crawl" :class="platCrawlStatus(m.platform).cls" :title="platRunTip(m.platform)">{{ platCrawlStatus(m.platform).text }}</span><small>上次采集 {{ fmtTime(m.last_poll_at) }}</small></div>
+                <div class="target-state"><span class="badge" :class="platformTargetState(m).cls">{{ platformTargetState(m).label }}</span><span class="badge crawl" :class="platCrawlStatus(m.platform).cls" :title="platRunTip(m.platform)">{{ platCrawlStatus(m.platform).text }}</span><small>成功 {{ fmtTime(m.last_success_at) }} · 尝试 {{ fmtTime(m.last_poll_at) }}</small></div>
                 <p v-if="m.last_error" class="row-error" :title="m.last_error">{{ m.last_error }}</p>
                 <div class="row-actions"><button class="btn small" @click="openPlatformPosts(m)">查看内容</button><button v-if="!m.active" class="btn small" @click="resumePlatformMonitor(m)">恢复</button><button class="btn small danger" @click="removePlatformMonitor(m)">停止</button></div>
               </article>
@@ -146,7 +146,7 @@
         </section>
 
         <section v-if="route === 'accounts'" class="page-section">
-          <div class="metric-grid account-metrics"><article class="metric-card"><span>X 账号总数</span><strong>{{ acc.stats?.total ?? 0 }}</strong><small>本机采集账号池</small></article><article class="metric-card" data-state="ok"><span>当前可用</span><strong>{{ acc.stats?.active ?? 0 }}</strong><small>已登录且未锁定</small></article><article class="metric-card" :data-state="(acc.stats?.inactive ?? 0) ? 'warning' : ''"><span>需要处理</span><strong>{{ acc.stats?.inactive ?? 0 }}</strong><small>失效或未登录账号</small></article></div>
+          <div class="metric-grid account-metrics"><article class="metric-card"><span>X 账号总数</span><strong>{{ acc.stats?.total ?? 0 }}</strong><small>本机采集账号池</small></article><article class="metric-card" data-state="ok"><span>当前启用</span><strong>{{ acc.stats?.active ?? 0 }}</strong><small>允许参与采集调度</small></article><article class="metric-card" :data-state="(acc.stats?.inactive ?? 0) ? 'warning' : ''"><span>不可调度</span><strong>{{ acc.stats?.inactive ?? 0 }}</strong><small>停用或失效账号</small></article></div>
           <div class="settings-grid">
             <article class="panel wechat-session-card">
               <header class="panel-head"><div><h2>微信公众号后台</h2><p>扫码会话仅保存在 X-Crawler 本机</p></div><span class="badge" :class="wechatSession.status === 'ready' ? 'ok' : 'off'">{{ wechatStatusLabel() }}</span></header>
@@ -155,16 +155,16 @@
             </article>
             <article class="panel account-setup">
               <header class="panel-head"><div><h2>添加 X 采集账号</h2><p>推荐优先导入浏览器登录后的 Cookies</p></div></header><div v-if="accMsg" class="alert" :class="accMsgOk ? 'ok' : 'error'">{{ accMsg }}</div>
-              <details open><summary>导入 Cookies（推荐）</summary><form class="stack-form" @submit.prevent="addAccountByCookies"><label><span>用户名</span><input v-model.trim="ckForm.username" required></label><label><span>Cookies</span><textarea v-model="ckForm.cookies" rows="4" placeholder="auth_token=...; ct0=..." required></textarea></label><button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '导入并验证' }}</button></form></details>
+              <details open><summary>导入 Cookies（推荐）</summary><form class="stack-form" @submit.prevent="addAccountByCookies"><label><span>用户名</span><input v-model.trim="ckForm.username" required></label><label><span>Cookies</span><textarea v-model="ckForm.cookies" rows="4" placeholder="auth_token=...; ct0=..." required></textarea></label><button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '导入 Cookies' }}</button></form></details>
               <details><summary>使用密码登录</summary><form class="stack-form" @submit.prevent="addAccountByPassword"><label><span>用户名</span><input v-model.trim="pwForm.username" autocomplete="username" required></label><label><span>密码</span><input v-model="pwForm.password" type="password" autocomplete="new-password" required></label><label><span>邮箱（可选）</span><input v-model="pwForm.email"></label><label><span>邮箱密码（可选）</span><input v-model="pwForm.email_password" type="password" autocomplete="new-password"></label><label><span>代理（可选）</span><input v-model="pwForm.proxy" placeholder="http://user:pass@host:port"></label><button type="submit" class="btn primary" :disabled="accBusy">{{ accBusy ? '处理中…' : '添加并登录' }}</button></form></details>
             </article>
           </div>
-          <article class="panel"><header class="panel-head"><div><h2>X 账号健康</h2><p>登录失败或会话失效时可重新登录</p></div></header><div class="target-list compact-list"><article v-for="a in acc.accounts || []" :key="a.username" class="target-row"><div class="target-identity"><span class="platform-mark">X</span><div><strong>@{{ a.username }}</strong><small>{{ a.login_method || '未知登录方式' }} · {{ a.total_req ?? 0 }} 次请求</small></div></div><div class="target-state"><span class="badge" :class="accState(a).cls">{{ accState(a).label }}</span><small>最近使用 {{ a.last_used || '-' }}</small></div><p v-if="a.error_msg" class="row-error" :title="a.error_msg">{{ a.error_msg }}</p><div class="row-actions"><button class="btn small" @click="setAccountActive(a, !a.active)">{{ a.active ? '暂停' : '启用' }}</button><button class="btn small" @click="reloginAccount(a)">重新登录</button><button class="btn small danger" @click="removeAccount(a)">删除</button></div></article><div v-if="!acc.accounts?.length" class="empty-state"><strong>还没有 X 采集账号</strong><p>先在上方导入 Cookies，或使用账号密码登录。</p></div></div></article>
+          <article class="panel"><header class="panel-head"><div><h2>X 账号健康</h2><p>登录失败或会话失效时可重新登录</p></div></header><div class="target-list compact-list"><article v-for="a in acc.accounts || []" :key="a.username" class="target-row"><div class="target-identity"><span class="platform-mark">X</span><div><strong>@{{ a.username }}</strong><small>{{ a.login_method || '未知登录方式' }} · {{ a.total_req ?? 0 }} 次请求</small></div></div><div class="target-state"><span class="badge" :class="accState(a).cls">{{ accState(a).label }}</span><small>最近使用 {{ a.last_used || '-' }}</small></div><p v-if="a.error_msg && a.error_msg !== 'None'" class="row-error" :title="a.error_msg">{{ a.error_msg }}</p><div class="row-actions"><button v-if="a.active || (a.logged_in && !a.error_msg)" class="btn small" @click="setAccountActive(a, !a.active)">{{ a.active ? '停止调度' : '启用' }}</button><button class="btn small" @click="reloginAccount(a)">重新登录</button><button class="btn small danger" @click="removeAccount(a)">删除</button></div></article><div v-if="!acc.accounts?.length" class="empty-state"><strong>还没有 X 采集账号</strong><p>先在上方导入 Cookies，或使用账号密码登录。</p></div></div></article>
         </section>
 
         <section v-if="route === 'stats'" class="page-section">
           <div class="metric-grid"><article class="metric-card"><span>服务运行</span><strong class="metric-text">{{ fmtDur(stats.uptime_seconds) }}</strong><small>{{ stats.scraper_mode || '-' }} 模式</small></article><article class="metric-card"><span>轮询次数</span><strong>{{ fmtNum(dashboard.totalPolls) }}</strong><small>全部 X 目标累计</small></article><article class="metric-card"><span>采集新增</span><strong>{{ fmtNum(dashboard.totalNew) }}</strong><small>本次进程累计</small></article><article class="metric-card" :data-state="dashboard.runtimeErrors ? 'warning' : 'ok'"><span>连续错误</span><strong>{{ dashboard.runtimeErrors }}</strong><small>全部目标合计</small></article></div>
-          <article class="panel"><header class="panel-head"><div><h2>X 目标运行明细</h2><p>用于定位退避、暂停和请求延迟</p></div></header><div class="table-scroll"><table><thead><tr><th>目标</th><th>状态</th><th>基础间隔</th><th>当前间隔</th><th>轮询</th><th>新增</th><th>最近耗时</th><th>错误</th></tr></thead><tbody><tr v-for="d in stats.monitors_detail || []" :key="d.id"><td><strong>@{{ d.username }}</strong><small>#{{ d.id }}</small></td><td><span class="badge" :class="d.active ? 'ok' : 'off'">{{ d.active ? '运行中' : '已暂停' }}</span></td><td>{{ d.interval_seconds }}s</td><td>{{ d.current_interval != null ? d.current_interval + 's' : '-' }}</td><td>{{ d.total_polls }}</td><td>{{ d.total_new }}</td><td>{{ fmtMs(d.last_poll_ms) }}</td><td class="error-cell" :title="d.last_error">{{ d.last_error || '-' }}</td></tr><tr v-if="!stats.monitors_detail?.length"><td colspan="8" class="table-empty">暂无运行数据</td></tr></tbody></table></div></article>
+          <article class="panel"><header class="panel-head"><div><h2>X 目标运行明细</h2><p>用于定位退避、暂停和请求延迟</p></div></header><div class="table-scroll"><table><thead><tr><th>目标</th><th>状态</th><th>基础间隔</th><th>当前间隔</th><th>轮询</th><th>新增</th><th>最近成功</th><th>最近尝试</th><th>最近耗时</th><th>错误</th></tr></thead><tbody><tr v-for="d in stats.monitors_detail || []" :key="d.id"><td><strong>@{{ d.username }}</strong><small>#{{ d.id }}</small></td><td><span class="badge" :class="xTargetState(d).cls">{{ xTargetState(d).label }}</span></td><td>{{ d.interval_seconds }}s</td><td>{{ d.current_interval != null ? d.current_interval + 's' : '-' }}</td><td>{{ d.total_polls }}</td><td>{{ d.total_new }}</td><td>{{ fmtTime(d.last_success_at) }}</td><td>{{ fmtTime(d.last_poll_at) }}</td><td>{{ fmtMs(d.last_poll_ms) }}</td><td class="error-cell" :title="d.last_error">{{ d.last_error || '-' }}</td></tr><tr v-if="!stats.monitors_detail?.length"><td colspan="10" class="table-empty">暂无运行数据</td></tr></tbody></table></div></article>
         </section>
       </main>
     </div>

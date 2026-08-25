@@ -67,7 +67,7 @@ async def delete_platform_monitor(monitor_id: int) -> dict:
     monitor = await state.db.get_platform_monitor(monitor_id)
     if monitor is None:
         raise HTTPException(status_code=404, detail="监控不存在")
-    await state.db.update_platform_monitor(monitor_id, active=0)
+    await state.db.update_platform_monitor(monitor_id, active=0, last_error=None)
     return {"ok": True}
 
 
@@ -122,6 +122,10 @@ async def platform_stats() -> dict:
         "per_platform": per_platform,
         "per_monitor": per_monitor,
         "runtime": scheduler.runtime_snapshot() if scheduler else [],
+        "components": {
+            "playwright_ready": state._bag.get("playwright_ready"),
+            "mediacrawler_ready": state._bag.get("mediacrawler_ready"),
+        },
     }
 
 

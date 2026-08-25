@@ -73,9 +73,14 @@ class MonitorManager:
                     "total_new": rt.total_new,
                     "last_poll_ms": rt.last_poll_ms,
                     "current_interval": rt.current_interval,
+                    "task_alive": self.task_alive(mid),
                 }
             )
         return out
+
+    def task_alive(self, monitor_id: int) -> bool:
+        task = self._tasks.get(monitor_id)
+        return task is not None and not task.done()
 
     # ---- 监控生命周期 ----
 
@@ -100,7 +105,7 @@ class MonitorManager:
         monitor = await self._db.get_monitor(monitor_id)
         if monitor is None:
             return False
-        await self._db.update_monitor(monitor_id, active=0)
+        await self._db.update_monitor(monitor_id, active=0, last_error=None)
         task = self._tasks.pop(monitor_id, None)
         if task is not None:
             task.cancel()
@@ -114,6 +119,7 @@ class MonitorManager:
         if not monitor["active"]:
             await self._db.update_monitor(monitor_id, active=1, last_error=None)
             self._runtime.pop(monitor_id, None)
+        if not self.task_alive(monitor_id):
             self._tasks[monitor_id] = asyncio.create_task(self._poll_loop(monitor_id))
         return await self._db.get_monitor(monitor_id)
 
@@ -123,7 +129,7 @@ class MonitorManager:
         monitor = await self._db.get_monitor(monitor_id)
         if monitor is None:
             return None
-        await self._db.update_monitor(monitor_id, active=0)
+        await self._db.update_monitor(monitor_id, active=0, last_error=None)
         task = self._tasks.pop(monitor_id, None)
         if task is not None:
             task.cancel()
@@ -145,6 +151,7 @@ class MonitorManager:
                     rt.current_interval = base_interval
 
                 start = time.monotonic()
+                pause = False
                 try:
                     tweets = await self._scraper.recent_tweets(monitor["user_id"], limit=POLL_LIMIT)
                     last_seen = monitor["last_seen_tweet_id"]
@@ -158,22 +165,25 @@ class MonitorManager:
                         if last_seen is None or t["id"] > last_seen:
                             last_seen = t["id"]
 
-                    if last_seen is not None:
-                        await self._db.mark_poll(monitor_id, last_seen, None)
+                    await self._db.mark_poll(monitor_id, last_seen, None)
                     rt.consecutive_errors = 0
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     rt.consecutive_errors += 1
-                    await self._db.mark_poll(monitor_id, None, str(e))
+                    detail = str(e) or f"{type(e).__name__}（无异常信息）"
+                    await self._db.mark_poll(monitor_id, None, detail)
                     if rt.consecutive_errors >= self._settings.pause_after_errors:
-                        msg = f"连续 {rt.consecutive_errors} 次失败，已自动暂停: {e}"
+                        msg = f"连续 {rt.consecutive_errors} 次失败，已自动暂停: {detail}"
                         await self._db.update_monitor(monitor_id, active=0, last_error=msg)
-                        return
+                        pause = True
 
                 rt.last_poll_ms = int((time.monotonic() - start) * 1000)
                 rt.total_polls += 1
                 rt.current_interval = self._next_interval(base_interval, rt.consecutive_errors)
+
+                if pause:
+                    return
 
                 await self._sleep(rt.current_interval)
         finally:

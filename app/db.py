@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS monitors (
     active INTEGER NOT NULL DEFAULT 1,
     last_seen_tweet_id INTEGER,
     last_poll_at TEXT,
+    last_success_at TEXT,
     last_error TEXT,
     created_by TEXT,
     created_at TEXT NOT NULL,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS platform_monitors (
     label TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
     last_poll_at TEXT,
+    last_success_at TEXT,
     last_error TEXT,
     created_by TEXT,
     created_at TEXT NOT NULL,
@@ -204,6 +206,13 @@ class Database:
         if "created_by" not in cols:
             await self._conn.execute("ALTER TABLE monitors ADD COLUMN created_by TEXT")
             await self._conn.commit()
+        if "last_success_at" not in cols:
+            await self._conn.execute("ALTER TABLE monitors ADD COLUMN last_success_at TEXT")
+            await self._conn.execute(
+                "UPDATE monitors SET last_success_at = last_poll_at "
+                "WHERE last_error IS NULL"
+            )
+            await self._conn.commit()
         # 轻量迁移：tweets 表补 media 列（推文图片/视频直链），并回填老数据
         tcols = {row[1] for row in await (await self._conn.execute("PRAGMA table_info(tweets)")).fetchall()}
         if "media" not in tcols:
@@ -253,6 +262,21 @@ class Database:
             await self._conn.commit()
         if "work_url" not in pcols:
             await self._conn.execute("ALTER TABLE platform_posts ADD COLUMN work_url TEXT")
+            await self._conn.commit()
+        monitor_columns = {
+            row[1]
+            for row in await (
+                await self._conn.execute("PRAGMA table_info(platform_monitors)")
+            ).fetchall()
+        }
+        if "last_success_at" not in monitor_columns:
+            await self._conn.execute(
+                "ALTER TABLE platform_monitors ADD COLUMN last_success_at TEXT"
+            )
+            await self._conn.execute(
+                "UPDATE platform_monitors SET last_success_at = last_poll_at "
+                "WHERE last_error IS NULL"
+            )
             await self._conn.commit()
         subscription_columns = {
             row[1]
@@ -322,16 +346,18 @@ class Database:
         return await self.get_monitor(monitor_id)
 
     async def mark_poll(self, monitor_id: int, last_seen: int | None, error: str | None) -> None:
+        ts = now_iso()
         await self.conn.execute(
             """
             UPDATE monitors
             SET last_seen_tweet_id = COALESCE(?, last_seen_tweet_id),
                 last_poll_at = ?,
+                last_success_at = CASE WHEN ? IS NULL THEN ? ELSE last_success_at END,
                 last_error = ?,
                 updated_at = ?
             WHERE id = ?
             """,
-            (last_seen, now_iso(), error, now_iso(), monitor_id),
+            (last_seen, ts, error, ts, error, ts, monitor_id),
         )
         await self.conn.commit()
 
@@ -496,13 +522,17 @@ class Database:
         return await self.get_platform_monitor(monitor_id)
 
     async def mark_platform_poll(self, monitor_id: int, error: str | None) -> None:
+        ts = now_iso()
         await self.conn.execute(
             """
             UPDATE platform_monitors
-            SET last_poll_at = ?, last_error = ?, updated_at = ?
+            SET last_poll_at = ?,
+                last_success_at = CASE WHEN ? IS NULL THEN ? ELSE last_success_at END,
+                last_error = ?,
+                updated_at = ?
             WHERE id = ?
             """,
-            (now_iso(), error, now_iso(), monitor_id),
+            (ts, error, ts, error, ts, monitor_id),
         )
         await self.conn.commit()
 

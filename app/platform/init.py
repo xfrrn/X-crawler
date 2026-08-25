@@ -81,14 +81,16 @@ async def _run(
     return proc.returncode, (proc.stdout or b"").decode("utf-8", errors="replace")
 
 
-async def ensure_mediacrawler_ready(settings: Settings) -> None:
+async def ensure_mediacrawler_ready(settings: Settings) -> bool | None:
     if not settings.mc_enabled:
         logger.warning("[platform-init] MC_ENABLED=false，跳过 MediaCrawler 初始化")
-        return
+        return None
     repo = Path(settings.mc_repo_path).resolve()
     if not repo.is_dir():
         logger.warning("[platform-init] MC_REPO_PATH 不存在，跳过初始化: %s", repo)
-        return
+        return False
+
+    ready = True
 
     # 1) uv sync 建 venv（首次慢，之后快路径跳过）
     if not (repo / ".venv").is_dir():
@@ -96,6 +98,7 @@ async def ensure_mediacrawler_ready(settings: Settings) -> None:
         code, tail = await _run(["uv", "sync"], repo, _SYNC_TIMEOUT)
         if code != 0:
             logger.error("[platform-init] uv sync 失败(%s): %s", code, tail[-1000:])
+            ready = False
         else:
             logger.info("[platform-init] uv sync 完成")
     else:
@@ -105,6 +108,7 @@ async def ensure_mediacrawler_ready(settings: Settings) -> None:
     for src, rel in _PATCHES:
         if not src.is_file():
             logger.error("[platform-init] 补丁文件缺失: %s", src)
+            ready = False
             continue
         dst = repo / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -114,10 +118,14 @@ async def ensure_mediacrawler_ready(settings: Settings) -> None:
         shutil.copy2(src, dst)
         logger.info("[platform-init] 已应用补丁: %s", rel)
 
-    logger.info("[platform-init] MediaCrawler 就绪: %s", repo)
+    if ready:
+        logger.info("[platform-init] MediaCrawler 就绪: %s", repo)
+    else:
+        logger.error("[platform-init] MediaCrawler 初始化不完整: %s", repo)
+    return ready
 
 
-async def ensure_playwright_ready() -> None:
+async def ensure_playwright_ready() -> bool:
     """确保主项目 Playwright 可启动 Chromium；失败只影响需要浏览器的采集。"""
     try:
         from playwright.async_api import async_playwright
@@ -125,7 +133,7 @@ async def ensure_playwright_ready() -> None:
         async with async_playwright() as playwright:
             if Path(playwright.chromium.executable_path).is_file():
                 logger.info("[platform-init] Chromium 已装（跳过）")
-                return
+                return True
         logger.info("[platform-init] 安装 Playwright Chromium（npmmirror 镜像）…")
         code, tail = await _run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -140,7 +148,9 @@ async def ensure_playwright_ready() -> None:
                 "[platform-init] playwright install chromium 失败(%s): %s",
                 code, tail[-1000:],
             )
-        else:
-            logger.info("[platform-init] Chromium 就绪")
+            return False
+        logger.info("[platform-init] Chromium 就绪")
+        return True
     except Exception:
         logger.error("[platform-init] Playwright Chromium 初始化失败，其他采集器继续运行")
+        return False

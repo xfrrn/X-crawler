@@ -1,11 +1,20 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 Platform = Literal["xhs", "dy", "ks", "wx"]
+TargetStatus = Literal["waiting", "healthy", "error", "paused", "auto_paused"]
 AutoUpPlatform = Literal[
     "x", "douyin", "kuaishou", "xiaohongshu", "wechat_official_account"
 ]
+
+
+def target_status(active: bool, last_success_at: str | None, last_error: str | None) -> TargetStatus:
+    if not active:
+        return "auto_paused" if last_error else "paused"
+    if last_error:
+        return "error"
+    return "healthy" if last_success_at else "waiting"
 
 
 class MonitorCreate(BaseModel):
@@ -24,10 +33,16 @@ class MonitorOut(BaseModel):
     active: bool
     last_seen_tweet_id: int | None
     last_poll_at: str | None
+    last_success_at: str | None
     last_error: str | None
     created_by: str | None = None
     created_at: str
     updated_at: str
+
+    @computed_field
+    @property
+    def status(self) -> TargetStatus:
+        return target_status(self.active, self.last_success_at, self.last_error)
 
 
 class AccountCreate(BaseModel):
@@ -80,10 +95,16 @@ class PlatformMonitorOut(BaseModel):
     label: str
     active: bool
     last_poll_at: str | None
+    last_success_at: str | None
     last_error: str | None
     created_by: str | None = None
     created_at: str
     updated_at: str
+
+    @computed_field
+    @property
+    def status(self) -> TargetStatus:
+        return target_status(self.active, self.last_success_at, self.last_error)
 
 
 class PlatformPostOut(BaseModel):
@@ -123,6 +144,11 @@ class AutoUpTargetOut(BaseModel):
     active: bool
     last_collected_at: str | None = Field(alias="lastCollectedAt")
     last_error: str | None = Field(alias="lastError")
+
+    @computed_field
+    @property
+    def status(self) -> TargetStatus:
+        return target_status(self.active, self.last_collected_at, self.last_error)
 
 
 class AutoUpChangeOut(BaseModel):

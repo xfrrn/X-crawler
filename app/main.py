@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI):
 
     await manager.start()
     # Playwright 同时供微信扫码和 MediaCrawler 使用；初始化失败不阻塞 API 启动。
-    await ensure_playwright_ready()
-    await ensure_mediacrawler_ready(settings)
+    state._bag["playwright_ready"] = await ensure_playwright_ready()
+    state._bag["mediacrawler_ready"] = await ensure_mediacrawler_ready(settings)
     await platform_scheduler.start()
     # 可选 ngrok 公网隧道：凭据留空跳过，失败不阻断服务
     await ngrok_tunnel.start()

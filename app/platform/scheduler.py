@@ -1,6 +1,6 @@
 """平台轮询调度：每平台一个常驻循环，错峰 + 全局串行 + 退避/自动暂停 + SSE 发布。
 
-抖音/快手/小红书按平台批量跑 MediaCrawler 子进程，微信按平台批量请求后台接口；
+抖音/快手/小红书在平台轮询内逐目标运行 MediaCrawler，微信按平台批量请求后台接口；
 两者都复用现有运行态、手动触发与 SSE，轮询节奏按平台配置而不是按监控项。
 """
 import asyncio
@@ -31,6 +31,7 @@ class PlatformRuntime:
     total_new: int = 0
     last_run_ms: int | None = None
     running: bool = False
+    last_error: str | None = None
 
 
 class PlatformScheduler:
@@ -51,6 +52,7 @@ class PlatformScheduler:
         self._lock = asyncio.Lock()
         self._tasks: dict[str, asyncio.Task] = {}
         self._runtime: dict[str, PlatformRuntime] = {}
+        self._monitor_errors: dict[int, int] = {}
 
     def _rt(self, platform: str) -> PlatformRuntime:
         rt = self._runtime.get(platform)
@@ -81,6 +83,7 @@ class PlatformScheduler:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
         self._runtime.clear()
+        self._monitor_errors.clear()
 
     # ---- 轮询循环 ----
 
@@ -111,15 +114,54 @@ class PlatformScheduler:
             return  # 防重入（手动触发/定时循环共用）
         rt.running = True
         start = time.monotonic()
+        new_posts: list[dict[str, Any]] = []
         try:
             async with self._lock:
                 # ponytail: 共用现有全局锁；平台量明显增加时再拆成浏览器锁和 HTTP 锁。
                 if platform == "wx":
                     new_posts = await self._wechat.collect(active)
+                    for m in active:
+                        await self._db.mark_platform_poll(m["id"], None)
+                    rt.consecutive_errors = 0
+                    rt.last_error = None
                 else:
-                    new_posts = (await self._engine.run_platform(platform, active)).new_posts
-            for m in active:
-                await self._db.mark_platform_poll(m["id"], None)
+                    failures: list[tuple[dict[str, Any], str]] = []
+                    for m in active:
+                        try:
+                            result = await self._engine.run_platform(platform, [m])
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as error:
+                            detail = str(error) or f"{type(error).__name__}（无异常信息）"
+                            failures.append((m, detail))
+                            count = self._monitor_errors.get(m["id"], 0) + 1
+                            self._monitor_errors[m["id"]] = count
+                            await self._db.mark_platform_poll(
+                                m["id"], f"{m['label']}抓取失败: {detail}"
+                            )
+                            if count >= self._settings.pause_after_errors:
+                                await self._db.update_platform_monitor(
+                                    m["id"],
+                                    active=0,
+                                    last_error=f"连续 {count} 次失败，已自动暂停: {detail}",
+                                )
+                                self._monitor_errors.pop(m["id"], None)
+                        else:
+                            self._monitor_errors.pop(m["id"], None)
+                            await self._db.mark_platform_poll(m["id"], None)
+                            new_posts.extend(result.new_posts)
+                    if failures:
+                        rt.consecutive_errors += 1
+                        failed_details = "；".join(
+                            f"{m['label']}: {detail}" for m, detail in failures
+                        )
+                        rt.last_error = (
+                            f"平台{platform}有 {len(failures)}/{len(active)} 个目标失败: "
+                            f"{failed_details}"
+                        )
+                    else:
+                        rt.consecutive_errors = 0
+                        rt.last_error = None
             for post in new_posts:
                 rt.total_new += 1
                 self._stream.publish(
@@ -130,7 +172,6 @@ class PlatformScheduler:
                         "post": post,
                     }
                 )
-            rt.consecutive_errors = 0
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -139,15 +180,17 @@ class PlatformScheduler:
             # 退而给出异常类型；子进程输出的完整日志在 engine 侧已落盘 data/logs/
             detail = str(e) if str(e) else f"{type(e).__name__}（无异常信息）"
             msg = f"平台{platform}抓取失败: {detail}"
+            rt.last_error = msg
             for m in active:
                 await self._db.mark_platform_poll(m["id"], msg)
             if rt.consecutive_errors >= self._settings.pause_after_errors:
-                msg2 = f"连续 {rt.consecutive_errors} 次失败，已自动暂停"
+                msg2 = f"连续 {rt.consecutive_errors} 次失败，已自动暂停: {detail}"
                 for m in active:
                     await self._db.update_platform_monitor(
                         m["id"], active=0, last_error=msg2
                     )
                 rt.consecutive_errors = 0  # 暂停后归零，resume 重新计
+                rt.last_error = msg2
         finally:
             rt.running = False
             rt.last_run_ms = int((time.monotonic() - start) * 1000)
@@ -189,7 +232,27 @@ class PlatformScheduler:
 
     def runtime_snapshot(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        for platform, rt in self._runtime.items():
+        for platform in PLATFORMS:
+            rt = self._runtime.get(platform) or PlatformRuntime()
+            task = self._tasks.get(platform)
+            scheduled = task is not None and not task.done()
+            unavailable_reason = None
+            if platform in MEDIA_PLATFORMS and not self._settings.mc_enabled:
+                unavailable_reason = "MediaCrawler 未启用"
+            elif platform in MEDIA_PLATFORMS and not os.path.isdir(self._settings.mc_repo_path):
+                unavailable_reason = "MediaCrawler 目录不存在"
+            elif task is None:
+                unavailable_reason = "调度任务未启动"
+            elif task.done():
+                if task.cancelled():
+                    unavailable_reason = "调度任务已停止"
+                else:
+                    error = task.exception()
+                    unavailable_reason = (
+                        str(error) or type(error).__name__
+                        if error is not None
+                        else "调度任务已停止"
+                    )
             out.append(
                 {
                     "platform": platform,
@@ -198,6 +261,9 @@ class PlatformScheduler:
                     "total_new": rt.total_new,
                     "last_run_ms": rt.last_run_ms,
                     "running": rt.running,
+                    "last_error": rt.last_error,
+                    "scheduled": scheduled,
+                    "unavailable_reason": unavailable_reason,
                 }
             )
         return out
