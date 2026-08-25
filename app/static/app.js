@@ -99,7 +99,7 @@ createApp({
       loginForm: { username: "", password: "" },
       // 监控管理
       monitors: [],
-      monForm: { username: "", interval: 15 },
+      monForm: { username: "", interval: 43200 },
       monAdding: false,
       monError: "",
       // 推文浏览

@@ -161,7 +161,7 @@ CDP 连不上会等约 60 秒再回退标准模式（此时才用 cookies）。
 ### 采集规则
 
 - **每个博主每轮只抓最新 15 条**（`MC_MAX_POSTS_PER_CREATOR`，三平台统一），不做全量爬。
-- 三平台各自一个轮询循环，间隔默认 1800s（`MC_POLL_INTERVAL_*`），启动错峰 0/10/20 分钟；同一时刻只跑一个子进程（全局串行，避免 CDP 9222 端口冲突与共享 sqlite 写冲突）。
+- 三平台各自一个轮询循环，间隔默认 12 小时（`MC_POLL_INTERVAL_*`），启动错峰 0/10/20 分钟；同一时刻只跑一个子进程（全局串行，避免 CDP 9222 端口冲突与共享 sqlite 写冲突）。
 - **去重 + 更新**：入库按 `(platform, content_id)` 去重；已存在的动态只刷新内容/点赞数等数据，仅新动态才写入并触发 SSE `platform_post` 事件。
 
 ### 微信公众号扫码与采集
@@ -262,10 +262,10 @@ X 用户名忽略 `@` 和大小写；抖音、快手和小红书从官方主页�
 | --- | --- | --- |
 | `DATA_DIR` | `./data` | 数据目录 |
 | `API_KEYS` | `dev-key-1` | API Key，逗号分隔多个 |
-| `DEFAULT_POLL_INTERVAL` | `15` | 默认轮询间隔（秒） |
+| `DEFAULT_POLL_INTERVAL` | `43200` | 默认轮询间隔（秒，12 小时） |
 | `SCRAPER_MODE` | `twscrape` | `twscrape` 真实抓取 / `mock` 演示 |
 | `TWSCRAPE_ACCOUNTS_DB` | `./data/accounts.db` | 采集账号库文件名 |
-| `MAX_POLL_INTERVAL` | `300` | 失败退避上限（秒） |
+| `MAX_POLL_INTERVAL` | `86400` | 失败退避上限（秒，24 小时） |
 | `PAUSE_AFTER_ERRORS` | `10` | 连续失败自动暂停阈值 |
 | `JITTER_FACTOR` | `0.3` | 错峰随机系数 |
 | `SSE_REPLAY_SIZE` | `50` | SSE 事件回放条数 |
@@ -276,9 +276,9 @@ X 用户名忽略 `@` 和大小写；抖音、快手和小红书从官方主页�
 | `TWS_PROXY` | （空） | 爬 X 全局代理，如 `http://127.0.0.1:7890`（所有采集账号生效） |
 | `MC_ENABLED` | `true` | 是否启用多平台（抖音/快手/小红书）监控 |
 | `MC_REPO_PATH` | `./mediacrawler` | MediaCrawler submodule 目录（首次启动自动初始化） |
-| `MC_POLL_INTERVAL_XHS` | `1800` | 小红书轮询间隔（秒） |
-| `MC_POLL_INTERVAL_DY` | `1800` | 抖音轮询间隔（秒） |
-| `MC_POLL_INTERVAL_KS` | `1800` | 快手轮询间隔（秒） |
+| `MC_POLL_INTERVAL_XHS` | `43200` | 小红书轮询间隔（秒，12 小时） |
+| `MC_POLL_INTERVAL_DY` | `43200` | 抖音轮询间隔（秒，12 小时） |
+| `MC_POLL_INTERVAL_KS` | `43200` | 快手轮询间隔（秒，12 小时） |
 | `MC_LOGIN_TYPE` | `cookie` | 登录方式：`cookie` / `qrcode` / `phone` |
 | `MC_COOKIES_XHS` | （空） | 小红书 Cookie（填 `web_session=...` 即可） |
 | `MC_COOKIES_DY` | （空） | 抖音 Cookie 整串 |
@@ -289,7 +289,7 @@ X 用户名忽略 `@` 和大小写；抖音、快手和小红书从官方主页�
 | `NGROK_AUTHTOKEN` | （空） | ngrok 公网隧道凭据；留空不启用（见「ngrok 公网隧道」） |
 | `NGROK_DOMAIN` | （空） | 已保留的固定域名，可选；免费档无则用随机 URL |
 | `APP_PORT` | `8000` | 默认启动端口（`uv run python -m app.main`），ngrok 隧道自动转发同一端口 |
-| `WECHAT_POLL_INTERVAL` | `1800` | 微信公众号轮询间隔（秒），不受 `MC_ENABLED` 控制 |
+| `WECHAT_POLL_INTERVAL` | `43200` | 微信公众号轮询间隔（秒，12 小时），不受 `MC_ENABLED` 控制 |
 | `WECHAT_MAX_ARTICLES` | `15` | 每个公众号每轮保存的最新文章数 |
 
 ## 数据去重

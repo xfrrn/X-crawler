@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS monitors (
     username TEXT NOT NULL UNIQUE,
     user_id INTEGER,
     display_name TEXT,
-    interval_seconds INTEGER NOT NULL DEFAULT 15,
+    interval_seconds INTEGER NOT NULL DEFAULT 43200,
     active INTEGER NOT NULL DEFAULT 1,
     last_seen_tweet_id INTEGER,
     last_poll_at TEXT,

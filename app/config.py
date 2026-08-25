@@ -10,12 +10,12 @@ class Settings(BaseSettings):
 
     data_dir: str = "./data"
     api_keys: str = "dev-key-1"
-    default_poll_interval: int = 15
+    default_poll_interval: int = 43200  # 12 小时
     scraper_mode: str = "twscrape"  # "twscrape" | "mock"
     twscrape_accounts_db: str = "./data/accounts.db"
 
     # 自适应轮询
-    max_poll_interval: int = 300  # 退避上限（秒）
+    max_poll_interval: int = 86400  # 退避上限（秒）
     pause_after_errors: int = 10  # 连续失败自动暂停阈值
     jitter_factor: float = 0.3  # 错峰系数（sleep 额外加 0~30% 随机）
 
@@ -42,9 +42,9 @@ class Settings(BaseSettings):
     # ---- 多平台监控（抖音/快手/小红书，子进程跑 MediaCrawler）----
     mc_enabled: bool = True
     mc_repo_path: str = "./mediacrawler"  # MediaCrawler submodule 目录（克隆时 --recurse-submodules 自带）
-    mc_poll_interval_xhs: int = 1800  # 每平台轮询间隔（秒），默认 30 分钟
-    mc_poll_interval_dy: int = 1800
-    mc_poll_interval_ks: int = 1800
+    mc_poll_interval_xhs: int = 43200  # 每平台轮询间隔（秒），默认 12 小时
+    mc_poll_interval_dy: int = 43200
+    mc_poll_interval_ks: int = 43200
     mc_login_type: str = "cookie"  # cookie | qrcode | phone
     # 按平台分的 cookie 串：xhs 只需 web_session；dy/ks 注入完整 Cookie 串
     mc_cookies_xhs: str = ""
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     app_port: int = 8000  # 隧道转发的本地端口，需与 uvicorn 监听端口一致
 
     # ---- 微信公众号后台 API ----
-    wechat_poll_interval: int = 1800
+    wechat_poll_interval: int = 43200
     wechat_max_articles: int = 15
 
     @property
@@ -84,7 +84,7 @@ class Settings(BaseSettings):
             "xhs": self.mc_poll_interval_xhs,
             "dy": self.mc_poll_interval_dy,
             "ks": self.mc_poll_interval_ks,
-        }.get(platform, 1800)
+        }.get(platform, 43200)
 
     def mc_cookies(self, platform: str) -> str:
         return {

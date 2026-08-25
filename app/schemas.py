@@ -19,7 +19,7 @@ def target_status(active: bool, last_success_at: str | None, last_error: str | N
 
 class MonitorCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64)
-    interval_seconds: int | None = Field(default=None, ge=1, le=3600)
+    interval_seconds: int | None = Field(default=None, ge=1, le=86400)
 
 
 class MonitorOut(BaseModel):
