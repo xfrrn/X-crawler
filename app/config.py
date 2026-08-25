@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # 对应 twscrape 内部读取的 TWS_PROXY 环境变量，所有账号（密码登录和 cookies 导入）都会走它。
     twscrape_proxy: str = Field(default="", validation_alias="TWS_PROXY")
 
+    # twscrape HTTP 后端：httpx（默认）| curl（curl_cffi）。登录态请求被 X 软封/
+    # 出 challenge 时优先试 curl——它伪装真实 Chrome 的 TLS/HTTP2 指纹，不再被识破为脚本。
+    # 对应 twscrape 内部读取的 TWS_HTTP_BACKEND 环境变量；留空用 httpx。
+    twscrape_http_backend: str = Field(default="", validation_alias="TWS_HTTP_BACKEND")
+
     # ---- 多平台监控（抖音/快手/小红书，子进程跑 MediaCrawler）----
     mc_enabled: bool = True
     mc_repo_path: str = "./mediacrawler"  # MediaCrawler submodule 目录（克隆时 --recurse-submodules 自带）
@@ -92,8 +97,11 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
-    # twscrape 用 os.getenv("TWS_PROXY") 取代理，而 .env 里的值只被 pydantic 读走，
-    # 不会自动变成进程环境变量——这里手动导出（若已是真实环境变量则不覆盖）
+    # twscrape 用 os.getenv("TWS_PROXY") / os.getenv("TWS_HTTP_BACKEND") 取配置，
+    # 而 .env 里的值只被 pydantic 读走，不会自动变成进程环境变量——这里手动导出
+    # （若已是真实环境变量则不覆盖）
     if settings.twscrape_proxy:
         os.environ.setdefault("TWS_PROXY", settings.twscrape_proxy)
+    if settings.twscrape_http_backend:
+        os.environ.setdefault("TWS_HTTP_BACKEND", settings.twscrape_http_backend)
     return settings
